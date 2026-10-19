@@ -32,6 +32,8 @@ provider:
     CATALOG_TABLE: ${self:custom.catalogTable}
     S3_BUCKET: ${self:custom.imagesBucket}
     ALLOWED_ORIGIN: ${env:ALLOWED_ORIGIN, ''}
+    NOTIFY_TOPIC_ARN:
+      Ref: NotifyTopic
 
   httpApi:
     cors:
@@ -88,6 +90,7 @@ functions:
   # ============ ms-pedidos360-orders  →  /api/orders/* ============
   createOrder:
     handler: src/functions/orders/createOrder/handler.handler
+    timeout: 10
     events:
       - httpApi:
           method: POST
@@ -121,6 +124,7 @@ functions:
 
   updateOrderStatus:
     handler: src/functions/orders/updateOrderStatus/handler.handler
+    timeout: 10
     events:
       - httpApi:
           method: PUT
@@ -208,14 +212,52 @@ functions:
             scopes:
               - catalog.write
 
-  # ==================================================================
-  # ms-pedidos360-notify / audit / report
-  # NO se despliegan en esta primera instancia: dependen de RabbitMQ
-  # y Kafka respectivamente. El código queda como esqueleto en
-  # src/functions/{notify,audit,report}/handler.js para cuando se
-  # integren esos servicios de mensajería. Ver README.md.
-  # ==================================================================
+  notifyEmailConsumer:
+    handler: src/functions/notify/consumers/email/handler.handler
+    timeout: 5
+    environment:
+      NOTIFY_EMAIL_DLQ_URL:
+        Ref: NotifyEmailDlq
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - NotifyEmailQueue
+              - Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  notifyShippingConsumer:
+    handler: src/functions/notify/consumers/shipping/handler.handler
+    timeout: 5
+    environment:
+      NOTIFY_SHIPPING_DLQ_URL:
+        Ref: NotifyShippingDlq
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - NotifyShippingQueue
+              - Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
+
+  notifyStatusConsumer:
+    handler: src/functions/notify/consumers/status/handler.handler
+    timeout: 5
+    environment:
+      NOTIFY_STATUS_DLQ_URL:
+        Ref: NotifyStatusDlq
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - NotifyStatusQueue
+              - Arn
+          batchSize: 1
+          functionResponseType: ReportBatchItemFailures
 
 resources:
   - ${file(infra/resources/dynamodb.yml)}
   - ${file(infra/resources/s3.yml)}
+  - ${file(infra/resources/notify.yml)}

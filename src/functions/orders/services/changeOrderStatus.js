@@ -1,6 +1,7 @@
 const { TransactWriteCommand } = require('@aws-sdk/lib-dynamodb');
 const { dynamoDb } = require('../../../libs/db/dynamoClient');
 const { buildHistoryEvent, appendHistoryEvent } = require('../../../libs/utils/orderHistory');
+const { publishNotification } = require('../../../libs/messaging/snsClient');
 
 const ORDERS_TABLE = process.env.ORDERS_TABLE;
 const CATALOG_TABLE = process.env.CATALOG_TABLE;
@@ -57,7 +58,21 @@ const changeOrderStatus = async ({ order, status, expectedVersion, user }) => {
     throw err;
   }
 
-  return { ...order, status, updatedAt, version: version + 1, history };
+  const updatedOrder = { ...order, status, updatedAt, version: version + 1, history };
+  await publishNotification({
+    eventId: `ORDER_STATUS_CHANGED#${order.id}#${updatedOrder.version}`,
+    eventType: 'ORDER_STATUS_CHANGED',
+    data: {
+      orderId: updatedOrder.id,
+      customerId: updatedOrder.customerId,
+      previousStatus: order.status,
+      status: updatedOrder.status,
+      version: updatedOrder.version,
+      updatedAt: updatedOrder.updatedAt,
+    },
+  });
+
+  return updatedOrder;
 };
 
 module.exports = { changeOrderStatus };

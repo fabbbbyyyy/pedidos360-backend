@@ -14,13 +14,12 @@ De los 5 microservicios de la tabla original, en esta etapa se implementan y
 | `ms-pedidos360-orders` | `/api/orders/*` | ✅ Implementado (DynamoDB) |
 | `ms-pedidos360-catalog` | `/api/catalog/*` | ✅ Implementado (DynamoDB) |
 | Imágenes de catálogo | S3 + URLs prefirmadas | ✅ Implementado |
-| `ms-pedidos360-notify` | consumidor RabbitMQ | ⏸️ Esqueleto en `src/functions/notify`, **no desplegado** |
+| `ms-pedidos360-notify` | SNS + SQS + Lambda | ✅ Topic, 3 colas, 3 DLQ y consumidores desplegados |
 | `ms-pedidos360-audit` | `/api/audit/*` (Kafka) | ⏸️ Esqueleto en `src/functions/audit`, **no desplegado** |
 | `ms-pedidos360-report` | `/api/report/*` (Kafka) | ⏸️ Esqueleto en `src/functions/report`, **no desplegado** |
 
-Se dejó el código de `notify`, `audit` y `report` como punto de partida, pero
-no están referenciados en `serverless.yml` a propósito, tal como pediste
-(nada de RabbitMQ ni Kafka funcional todavía).
+Se dejó el código de `audit` y `report` como punto de partida, pero todavía no
+se despliegan porque no se ha integrado Kafka.
 
 ### Diferencias respecto a la tabla original
 
@@ -30,8 +29,9 @@ no están referenciados en `serverless.yml` a propósito, tal como pediste
   proyecto/cuenta, el descuento de stock al crear un pedido se hace con una
   transacción DynamoDB (`TransactWriteCommand`) en vez de mensajería. Si el
   stock no alcanza, toda la operación se cancela.
-- **Notificación**: al no haber RabbitMQ, `createOrder` **no** dispara
-  notificaciones todavía.
+- **Notificación**: `createOrder` publica eventos `ORDER_CREATED` en SNS y
+  `updateOrderStatus` publica eventos `ORDER_STATUS_CHANGED`. SNS enruta los
+  eventos a las colas SQS según sus filter policies.
 
 ## 2. Arquitectura
 
@@ -243,6 +243,13 @@ hacer push a `main`. Necesita estos **secrets** en el repo
 - `AZURE_API_AUDIENCE`
 - `S3_BUCKET`
 - `ALLOWED_ORIGIN`
+- `NOTIFY_TOPIC_NAME`
+- `NOTIFY_EMAIL_QUEUE_NAME`
+- `NOTIFY_EMAIL_DLQ_NAME`
+- `NOTIFY_SHIPPING_QUEUE_NAME`
+- `NOTIFY_SHIPPING_DLQ_NAME`
+- `NOTIFY_STATUS_QUEUE_NAME`
+- `NOTIFY_STATUS_DLQ_NAME`
 
 **Ojo con Learner Lab**: como las credenciales expiran, el workflow va a
 empezar a fallar solo hasta que actualices `AWS_SESSION_TOKEN` (y
@@ -260,7 +267,7 @@ pedidos360-backend/
 │   ├── functions/
 │   │   ├── orders/        # createOrder, getOrder, getOrders, updateOrderStatus, deleteOrder
 │   │   ├── catalog/       # createProduct, getProduct, getProducts, updateProduct, deleteProduct
-│   │   ├── notify/        # stub, pendiente RabbitMQ (no desplegado)
+│   │   ├── notify/        # consumidores SQS y handlers de notificación
 │   │   ├── audit/         # stub, pendiente Kafka (no desplegado)
 │   │   └── report/        # stub, pendiente Kafka (no desplegado)
 │   ├── libs/
@@ -291,11 +298,45 @@ npm test
 
 La suite actual valida el helper común de respuestas HTTP y sus headers CORS.
 
-## 11. Próximos pasos sugeridos
+## 11. Mensajería de notificaciones
 
-- **notify**: crear un broker (Amazon MQ para RabbitMQ) y una Lambda
-  disparada por ese broker; `createOrder` publicaría un evento al confirmar
-  el pedido.
+La infraestructura se define en `infra/resources/notify.yml` y se incorpora
+desde `serverless.yml`. Se crean:
+
+- Un SNS Topic.
+- `notify-email`, `notify-shipping` y `notify-status`.
+- Una DLQ independiente para cada cola.
+- `VisibilityTimeout` de 30 segundos y `maxReceiveCount` de 3.
+- Consumidores Lambda con timeout de 5 segundos y `ReportBatchItemFailures`.
+
+Las suscripciones usan filtros sobre el cuerpo del mensaje:
+
+| Consumidor | `eventType` |
+|---|---|
+| Email | `ORDER_CREATED` |
+| Shipping | `ORDER_CREATED` |
+| Status | `ORDER_STATUS_CHANGED` |
+
+Los consumidores validan `eventId`, `eventType` y `data.orderId`. Un mensaje
+inválido se envía explícitamente a su DLQ y se confirma para evitar reintentos.
+Los errores de procesamiento se devuelven como `batchItemFailures`, por lo
+que SQS los reintenta hasta alcanzar el máximo configurado.
+
+Los nombres de topic, colas y DLQ se configuran mediante las variables
+`NOTIFY_TOPIC_NAME`, `NOTIFY_EMAIL_QUEUE_NAME`,
+`NOTIFY_EMAIL_DLQ_NAME`, `NOTIFY_SHIPPING_QUEUE_NAME`,
+`NOTIFY_SHIPPING_DLQ_NAME`, `NOTIFY_STATUS_QUEUE_NAME` y
+`NOTIFY_STATUS_DLQ_NAME`. El ARN del topic se inyecta automáticamente como
+`NOTIFY_TOPIC_ARN` en las Lambdas productoras.
+
+El rol indicado por `AWS_ROLE_ARN` debe permitir `sns:Publish` para
+`createOrder` y `updateOrderStatus`, además de `sqs:ReceiveMessage`,
+`sqs:DeleteMessage` y `sqs:GetQueueAttributes` para los consumidores.
+
+## 12. Próximos pasos sugeridos
+
+- **notify**: reemplazar los procesadores de ejemplo por integraciones reales
+  de email y despacho.
 - **audit / report**: evaluar Amazon MSK (Kafka administrado) o, si el
   presupuesto de la cuenta educativa no lo permite, Kinesis Data Streams
   como alternativa más económica con semántica similar.

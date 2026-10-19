@@ -60,6 +60,13 @@ jobs:
           AWS_ROLE_ARN=${{ secrets.AWS_ROLE_ARN }}
           AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
           AZURE_API_AUDIENCE=${{ secrets.AZURE_API_AUDIENCE }}
+          NOTIFY_TOPIC_NAME=${{ secrets.NOTIFY_TOPIC_NAME }}
+          NOTIFY_EMAIL_QUEUE_NAME=${{ secrets.NOTIFY_EMAIL_QUEUE_NAME }}
+          NOTIFY_EMAIL_DLQ_NAME=${{ secrets.NOTIFY_EMAIL_DLQ_NAME }}
+          NOTIFY_SHIPPING_QUEUE_NAME=${{ secrets.NOTIFY_SHIPPING_QUEUE_NAME }}
+          NOTIFY_SHIPPING_DLQ_NAME=${{ secrets.NOTIFY_SHIPPING_DLQ_NAME }}
+          NOTIFY_STATUS_QUEUE_NAME=${{ secrets.NOTIFY_STATUS_QUEUE_NAME }}
+          NOTIFY_STATUS_DLQ_NAME=${{ secrets.NOTIFY_STATUS_DLQ_NAME }}
           EOF
 
       - name: Vaciar bucket S3 antes del remove

@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-const { BatchGetCommand, GetCommand, TransactWriteCommand } = require('@aws-sdk/lib-dynamodb');
+const { BatchGetCommand, GetCommand, TransactWriteCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { dynamoDb } = require('../../../libs/db/dynamoClient');
 const { success } = require('../../../libs/utils/response');
 const { withErrorHandler } = require('../../../libs/middlewares/errorHandler');
@@ -8,6 +8,7 @@ const { getUserFromEvent, ensureClientCreateRequest } = require('../../../libs/m
 const { createOrderSchema } = require('../../../models/order.model');
 const { requireRoles } = require('../../../libs/middlewares/requireRoles');
 const { buildHistoryEvent } = require('../../../libs/utils/orderHistory');
+const { publishNotification } = require('../../../libs/messaging/snsClient');
 const PERMISSIONS = require('../../../libs/constants/permissions');
 
 const ORDERS_TABLE = process.env.ORDERS_TABLE;
@@ -55,6 +56,19 @@ const handler = async (event) => {
       TableName: ORDERS_TABLE,
       Key: orderKey(existing.Item.orderId),
     }));
+    if (existing.Item.notificationPublished !== true) {
+      await publishNotification({
+        eventId: `ORDER_CREATED#${order.Item.id}`,
+        eventType: 'ORDER_CREATED',
+        data: order.Item,
+      });
+      await dynamoDb.send(new UpdateCommand({
+        TableName: ORDERS_TABLE,
+        Key: idempotencyKey(requestIdempotencyKey),
+        UpdateExpression: 'SET notificationPublished = :published',
+        ExpressionAttributeValues: { ':published': true },
+      }));
+    }
     return success(order.Item, 201);
   }
 
@@ -156,6 +170,18 @@ const handler = async (event) => {
     }
     throw err;
   }
+
+  await publishNotification({
+    eventId: `ORDER_CREATED#${order.id}`,
+    eventType: 'ORDER_CREATED',
+    data: order,
+  });
+  await dynamoDb.send(new UpdateCommand({
+    TableName: ORDERS_TABLE,
+    Key: idempotencyKey(requestIdempotencyKey),
+    UpdateExpression: 'SET notificationPublished = :published',
+    ExpressionAttributeValues: { ':published': true },
+  }));
 
   return success(order, 201);
 };

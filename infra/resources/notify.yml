@@ -1,0 +1,153 @@
+Resources:
+  NotifyTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ${env:NOTIFY_TOPIC_NAME, 'pedidos360-notify-${self:provider.stage}'}
+
+  NotifyEmailDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_EMAIL_DLQ_NAME, 'pedidos360-notify-email-dlq-${self:provider.stage}'}
+      VisibilityTimeout: 30
+
+  NotifyShippingDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_SHIPPING_DLQ_NAME, 'pedidos360-notify-shipping-dlq-${self:provider.stage}'}
+      VisibilityTimeout: 30
+
+  NotifyStatusDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_STATUS_DLQ_NAME, 'pedidos360-notify-status-dlq-${self:provider.stage}'}
+      VisibilityTimeout: 30
+
+  NotifyEmailQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_EMAIL_QUEUE_NAME, 'pedidos360-notify-email-${self:provider.stage}'}
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotifyEmailDlq.Arn
+        maxReceiveCount: 3
+
+  NotifyShippingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_SHIPPING_QUEUE_NAME, 'pedidos360-notify-shipping-${self:provider.stage}'}
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotifyShippingDlq.Arn
+        maxReceiveCount: 3
+
+  NotifyStatusQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_STATUS_QUEUE_NAME, 'pedidos360-notify-status-${self:provider.stage}'}
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotifyStatusDlq.Arn
+        maxReceiveCount: 3
+
+  NotifyEmailQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotifyEmailQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt NotifyEmailQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref NotifyTopic
+
+  NotifyShippingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotifyShippingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt NotifyShippingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref NotifyTopic
+
+  NotifyStatusQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotifyStatusQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt NotifyStatusQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref NotifyTopic
+
+  NotifyEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref NotifyTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotifyEmailQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        eventType:
+          - ORDER_CREATED
+
+  NotifyShippingSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref NotifyTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotifyShippingQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        eventType:
+          - ORDER_CREATED
+
+  NotifyStatusSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref NotifyTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotifyStatusQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        eventType:
+          - ORDER_STATUS_CHANGED
+
+Outputs:
+  NotifyTopicArn:
+    Value: !Ref NotifyTopic
+  NotifyEmailQueueUrl:
+    Value: !Ref NotifyEmailQueue
+  NotifyEmailDlqUrl:
+    Value: !Ref NotifyEmailDlq
+  NotifyShippingQueueUrl:
+    Value: !Ref NotifyShippingQueue
+  NotifyShippingDlqUrl:
+    Value: !Ref NotifyShippingDlq
+  NotifyStatusQueueUrl:
+    Value: !Ref NotifyStatusQueue
+  NotifyStatusDlqUrl:
+    Value: !Ref NotifyStatusDlq
