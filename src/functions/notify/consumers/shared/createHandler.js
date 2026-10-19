@@ -55,4 +55,4 @@ const createConsumerHandler = ({ consumerName, dlqUrl, processMessage }) => asyn
   return { batchItemFailures };
 };
 
-module.exports = { NonRecoverableError, createConsumerHandler };
+module.exports = { NonRecoverableError, createConsumerHandler, parseMessage };

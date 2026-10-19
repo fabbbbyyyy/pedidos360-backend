@@ -60,7 +60,7 @@ const handler = async (event) => {
       await publishNotification({
         eventId: `ORDER_CREATED#${order.Item.id}`,
         eventType: 'ORDER_CREATED',
-        data: order.Item,
+        data: { ...order.Item, orderId: order.Item.id },
       });
       await dynamoDb.send(new UpdateCommand({
         TableName: ORDERS_TABLE,
@@ -174,7 +174,7 @@ const handler = async (event) => {
   await publishNotification({
     eventId: `ORDER_CREATED#${order.id}`,
     eventType: 'ORDER_CREATED',
-    data: order,
+    data: { ...order, orderId: order.id },
   });
   await dynamoDb.send(new UpdateCommand({
     TableName: ORDERS_TABLE,
