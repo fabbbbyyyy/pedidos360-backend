@@ -107,7 +107,6 @@ Resources:
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref InstanceProfileName
       SubnetId: !Ref KafkaSubnet
-      AssociatePublicIpAddress: true
       SecurityGroupIds:
         - !Ref KafkaSecurityGroup
       BlockDeviceMappings:
