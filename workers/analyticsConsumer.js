@@ -16,6 +16,7 @@ const required = (name) => {
 const tableName = required('ANALYTICS_TABLE');
 const region = required('AWS_REGION');
 const topic = process.env.KAFKA_TOPIC || 'orders.events';
+const dltTopic = process.env.KAFKA_DLT_TOPIC || 'orders.events.dlt';
 const groupId = process.env.KAFKA_ANALYTICS_GROUP || 'analytics-service';
 const fromBeginning = process.env.KAFKA_ANALYTICS_FROM_BEGINNING === 'true';
 const kafkaTls = process.env.KAFKA_TLS !== 'false';
@@ -45,10 +46,31 @@ if (kafkaTls) {
 
 const kafka = new Kafka(kafkaOptions);
 const consumer = kafka.consumer({ groupId, allowAutoTopicCreation: false });
+const dltProducer = kafka.producer({ idempotent: true, maxInFlightRequests: 1 });
+
+const buildDltMessage = ({ message, error, sourceTopic }) => ({
+  key: message.key?.toString() || null,
+  value: JSON.stringify({
+    failedAt: new Date().toISOString(),
+    reason: error.message,
+    original: message.value?.toString() || '',
+  }),
+  headers: {
+    error: error.message,
+    sourceTopic,
+  },
+});
+
+const publishToDlt = async ({ message, error }) => {
+  await dltProducer.send({
+    topic: dltTopic,
+    messages: [buildDltMessage({ message, error, sourceTopic: topic })],
+  });
+};
 
 const processMessage = async ({ message }) => {
-  const event = parseEvent(message.value.toString());
   try {
+    const event = parseEvent(message.value.toString());
     await dynamo.send(new TransactWriteCommand({
       TransactItems: buildAnalyticsTransaction({ event, tableName }),
     }));
@@ -64,13 +86,24 @@ const processMessage = async ({ message }) => {
 };
 
 const run = async () => {
+  await dltProducer.connect();
   await consumer.connect();
   await consumer.subscribe({ topic, fromBeginning });
   console.log(`Analytics consumer conectado a ${topic} con group ${groupId}`);
   await consumer.run({
     autoCommit: false,
     eachMessage: async ({ topic: messageTopic, partition, message }) => {
-      await processMessage({ message });
+      try {
+        await processMessage({ message });
+      } catch (error) {
+        await publishToDlt({ message, error });
+        console.error('Evento enviado a la DLT de analytics', {
+          topic: messageTopic,
+          partition,
+          offset: message.offset,
+          error: error.message,
+        });
+      }
       await consumer.commitOffsets([{
         topic: messageTopic,
         partition,
@@ -82,12 +115,17 @@ const run = async () => {
 
 const shutdown = async () => {
   await consumer.disconnect();
+  await dltProducer.disconnect();
   process.exit(0);
 };
 
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);
-run().catch((error) => {
-  console.error('Analytics consumer detenido', error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  run().catch((error) => {
+    console.error('Analytics consumer detenido', error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { buildDltMessage };

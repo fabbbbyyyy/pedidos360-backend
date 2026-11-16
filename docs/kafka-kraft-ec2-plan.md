@@ -448,6 +448,7 @@ se debe desplegar en la EC2 de producción.
 - [x] Evento conservado después de reiniciar el contenedor Kafka.
 - [x] Tabla DynamoDB de analítica parametrizada como `ANALYTICS_TABLE`.
 - [x] Consumer group `analytics-service` y agregaciones idempotentes por `eventId`.
+- [x] Eventos inválidos del consumidor se publican en `orders.events.dlt` sin bloquear el consumer group.
 - [x] Tests de buckets por minuto, ventas y cambios de estado.
 - [x] Endpoint `GET /api/report/analytics` para consultar métricas por rango.
 - [x] DynamoDB Local en memoria disponible en el Compose para pruebas end-to-end de analítica.
@@ -468,4 +469,4 @@ se debe desplegar en la EC2 de producción.
 - [ ] Añadir tests de outbox, reintentos e idempotencia.
 - [x] Recuperar leases `PROCESSING` expirados tras una caída del worker.
 - [x] Levantar el broker local y verificar healthcheck, particiones y retención.
-- [ ] Conectar el frontend a esos endpoints cuando el backend esté validado.
+- [x] Conectar el frontend a esos endpoints cuando el backend esté validado.

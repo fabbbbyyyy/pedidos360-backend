@@ -60,6 +60,7 @@ services:
       ANALYTICS_TABLE: ${ANALYTICS_TABLE:-pedidos360-analytics-local}
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:29092}
       KAFKA_TOPIC: ${KAFKA_TOPIC:-orders.events}
+      KAFKA_DLT_TOPIC: ${KAFKA_DLT_TOPIC:-orders.events.dlt}
       KAFKA_ANALYTICS_GROUP: ${KAFKA_ANALYTICS_GROUP:-analytics-service}
       KAFKA_ANALYTICS_FROM_BEGINNING: ${KAFKA_ANALYTICS_FROM_BEGINNING:-false}
       KAFKA_TLS: "false"

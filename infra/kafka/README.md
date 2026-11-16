@@ -57,6 +57,36 @@ variables Kafka/SASL/TLS estén configuradas para el entorno correspondiente.
 Si el worker se detiene después de reclamar un evento, recupera automáticamente
 los leases `PROCESSING` cuyo `leaseUntil` ya expiró y los devuelve a `PENDING`.
 
+## Carga de prueba y DLT
+
+`scripts/load-test.js` inserta eventos directamente en la tabla Outbox usando
+el instance profile de la EC2. Genera 500 eventos por defecto: cuatro de cada
+cinco son válidos y uno de cada cinco omite `eventType` para probar la DLT.
+Ejecutarlo únicamente en un entorno de prueba o aceptando que creará pedidos
+de prueba en las métricas:
+
+```bash
+LOAD_TEST_TOTAL=500 LOAD_TEST_INVALID_EVERY=5 \
+docker compose exec -T outbox-publisher node - < scripts/load-test.js
+```
+
+La imagen de workers debe incluir primero el consumidor con soporte para
+`orders.events.dlt`. Verificar los resultados con:
+
+```bash
+docker compose logs -f --tail=100 outbox-publisher analytics
+docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-console-consumer.sh \
+  --topic orders.events.dlt \
+  --bootstrap-server localhost:29092 \
+  --from-beginning \
+  --property print.key=true \
+  --property print.offset=true
+```
+
+El script no usa credenciales estáticas: el SDK de AWS toma el instance
+profile de la EC2.
+
 ## Configuración de producción
 
 Usar `.env.production.example` como referencia, sin copiar credenciales reales
