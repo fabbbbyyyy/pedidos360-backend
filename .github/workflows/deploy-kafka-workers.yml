@@ -202,6 +202,21 @@ jobs:
           export WORKERS_IMAGE='${WORKERS_IMAGE}'
           docker compose --profile workers pull analytics outbox-publisher
           docker compose --profile workers up -d --no-build analytics outbox-publisher
+          docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:29092 \
+            --create --if-not-exists \
+            --topic orders.events \
+            --partitions 3 \
+            --replication-factor 1 \
+            --config retention.ms=604800000
+          docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server localhost:29092 \
+            --create --if-not-exists \
+            --topic orders.events.dlt \
+            --partitions 1 \
+            --replication-factor 1 \
+            --config retention.ms=2592000000
+          docker compose --profile workers restart analytics outbox-publisher
           docker image prune -f
           EOF
           )
