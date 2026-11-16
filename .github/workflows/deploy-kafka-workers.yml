@@ -64,6 +64,7 @@ jobs:
           STACK_NAME: ${{ secrets.KAFKA_EC2_STACK_NAME }}
           ALLOWED_KAFKA_CIDR: ${{ secrets.KAFKA_ALLOWED_KAFKA_CIDR }}
           INSTANCE_PROFILE_NAME: ${{ secrets.KAFKA_INSTANCE_PROFILE_NAME }}
+          IAM_ROLE_NAME: ${{ secrets.KAFKA_IAM_ROLE_NAME }}
           INSTANCE_TYPE: ${{ secrets.KAFKA_INSTANCE_TYPE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -79,12 +80,35 @@ jobs:
           : "${GHCR_READ_TOKEN:?GHCR_READ_TOKEN is required}"
           : "${KAFKA_ENV_B64:?KAFKA_ENV_B64 is required}"
 
+          stack_status=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null || true)
+          if [ "$stack_status" = "ROLLBACK_COMPLETE" ]; then
+            echo "El stack está en ROLLBACK_COMPLETE; se eliminará antes de recrearlo."
+            aws cloudformation delete-stack --stack-name "$STACK_NAME"
+            aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+          fi
+
+          if [ -z "$INSTANCE_PROFILE_NAME" ]; then
+            IAM_ROLE_NAME="${IAM_ROLE_NAME:-LabRole}"
+            INSTANCE_PROFILE_NAME=$(aws iam list-instance-profiles-for-role \
+              --role-name "$IAM_ROLE_NAME" \
+              --query 'InstanceProfiles[0].InstanceProfileName' \
+              --output text)
+            if [ -z "$INSTANCE_PROFILE_NAME" ] || [ "$INSTANCE_PROFILE_NAME" = "None" ]; then
+              echo "El rol $IAM_ROLE_NAME no tiene un instance profile asociado." >&2
+              echo "Configura KAFKA_INSTANCE_PROFILE_NAME con un instance profile válido o crea uno asociado al rol." >&2
+              exit 1
+            fi
+          fi
+
           if ! aws cloudformation deploy \
             --stack-name "$STACK_NAME" \
             --template-file infra/kafka/ec2.yml \
             --parameter-overrides \
               AllowedKafkaCidr="${ALLOWED_KAFKA_CIDR:-10.42.0.0/16}" \
-              InstanceProfileName="${INSTANCE_PROFILE_NAME:-LabRole}" \
+              InstanceProfileName="$INSTANCE_PROFILE_NAME" \
               InstanceType="${INSTANCE_TYPE:-t3.small}"; then
             echo "CloudFormation rechazó la plantilla. Eventos de diagnóstico:"
             aws cloudformation describe-stack-events \

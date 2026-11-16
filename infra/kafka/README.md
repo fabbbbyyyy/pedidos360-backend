@@ -68,7 +68,8 @@ instancia mediante SSM. Requiere configurar en GitHub:
 
 - `KAFKA_EC2_STACK_NAME`
 - `KAFKA_ALLOWED_KAFKA_CIDR` (opcional; por defecto usa la red privada creada)
-- `KAFKA_INSTANCE_PROFILE_NAME` (opcional, por defecto `LabRole`)
+- `KAFKA_INSTANCE_PROFILE_NAME` (opcional; se busca automáticamente asociado a `LabRole`)
+- `KAFKA_IAM_ROLE_NAME` (opcional, por defecto `LabRole`)
 - `KAFKA_INSTANCE_TYPE` (opcional, por defecto `t3.small`)
 - `KAFKA_EC2_APP_DIR`
 - `GHCR_USERNAME`
