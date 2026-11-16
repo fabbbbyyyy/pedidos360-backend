@@ -191,6 +191,7 @@ jobs:
           printf '%s' '${compose_b64}' | base64 -d > "${APP_DIR}/docker-compose.yml"
           printf '%s' '${KAFKA_ENV_B64}' | base64 -d > "${APP_DIR}/.env"
           sed -i "s/__KAFKA_ELASTIC_IP__/${ELASTIC_IP}/g" "${APP_DIR}/.env"
+          sed -i 's|^KAFKA_BROKERS=.*|KAFKA_BROKERS=kafka:29092|' "${APP_DIR}/.env"
           if [ -n '${KAFKA_CA_B64}' ]; then
             printf '%s' '${KAFKA_CA_B64}' | base64 -d > "${APP_DIR}/secrets/ca.crt"
             chmod 600 "${APP_DIR}/secrets/ca.crt"

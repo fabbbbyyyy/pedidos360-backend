@@ -78,8 +78,9 @@ instancia mediante SSM. Requiere configurar en GitHub:
 - `KAFKA_CA_B64` (solo cuando `KAFKA_TLS=true`)
 
 En `KAFKA_ENV_B64`, usa `__KAFKA_ELASTIC_IP__` como marcador en
-`KAFKA_BROKERS` y `KAFKA_ADVERTISED_HOST`; el workflow lo reemplaza por la
-Elastic IP creada por CloudFormation.
+`KAFKA_ADVERTISED_HOST`; el workflow lo reemplaza por la Elastic IP creada por
+CloudFormation. Los workers usan automáticamente `kafka:29092` dentro de la
+red Docker; los clientes externos usan la Elastic IP en el puerto `9092`.
 
 El workflow crea automáticamente una VPC `10.42.0.0/16`, una subnet pública
 `10.42.1.0/24`, Internet Gateway, tabla de rutas, EC2, Elastic IP, Security

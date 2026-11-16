@@ -28,7 +28,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1
       interval: 10s
       timeout: 5s
       retries: 12
