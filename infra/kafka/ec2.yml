@@ -131,6 +131,7 @@ Resources:
 
   KafkaElasticIp:
     Type: AWS::EC2::EIP
+    DependsOn: KafkaVpcGatewayAttachment
     Properties:
       Domain: vpc
       InstanceId: !Ref KafkaInstance

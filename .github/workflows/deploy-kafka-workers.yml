@@ -79,13 +79,20 @@ jobs:
           : "${GHCR_READ_TOKEN:?GHCR_READ_TOKEN is required}"
           : "${KAFKA_ENV_B64:?KAFKA_ENV_B64 is required}"
 
-          aws cloudformation deploy \
+          if ! aws cloudformation deploy \
             --stack-name "$STACK_NAME" \
             --template-file infra/kafka/ec2.yml \
             --parameter-overrides \
               AllowedKafkaCidr="${ALLOWED_KAFKA_CIDR:-10.42.0.0/16}" \
               InstanceProfileName="${INSTANCE_PROFILE_NAME:-LabRole}" \
-              InstanceType="${INSTANCE_TYPE:-t3.small}"
+              InstanceType="${INSTANCE_TYPE:-t3.small}"; then
+            echo "CloudFormation rechazó la plantilla. Eventos de diagnóstico:"
+            aws cloudformation describe-stack-events \
+              --stack-name "$STACK_NAME" \
+              --query 'StackEvents[?ResourceStatusReason != `null`].[LogicalResourceId,ResourceStatus,ResourceStatusReason]' \
+              --output table || true
+            exit 1
+          fi
 
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
