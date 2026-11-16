@@ -56,8 +56,6 @@ services:
       - ${KAFKA_SECRETS_DIR:-./secrets}:/etc/kafka/secrets:ro
     environment:
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
       DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT-}
       ANALYTICS_TABLE: ${ANALYTICS_TABLE:-pedidos360-analytics-local}
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:29092}
@@ -83,8 +81,6 @@ services:
       - ${KAFKA_SECRETS_DIR:-./secrets}:/etc/kafka/secrets:ro
     environment:
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
       DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT-}
       OUTBOX_TABLE: ${OUTBOX_TABLE:-pedidos360-outbox-local}
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:29092}
