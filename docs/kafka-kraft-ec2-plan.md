@@ -458,6 +458,7 @@ se debe desplegar en la EC2 de producción.
 - [x] Imagen de workers construida y conexión interna verificada mediante `kafka:29092`.
 - [x] Workers exigen TLS/SASL fuera del modo local explícito `KAFKA_TLS=false`.
 - [x] Workflow manual para publicar workers en GHCR y actualizar EC2 mediante SSM.
+- [x] Workflow espera el resultado del despliegue SSM y muestra stdout/stderr ante errores.
 
 ### Pendiente inmediato
 
@@ -465,6 +466,6 @@ se debe desplegar en la EC2 de producción.
 - [x] Workflow de aprovisionamiento CloudFormation para EC2, EIP, Security Group y EBS.
 - [ ] Validar en la cuenta AWS los permisos SSM/EC2 del `LabRole` y configurar los secrets del workflow.
 - [ ] Añadir tests de outbox, reintentos e idempotencia.
-- [ ] Recuperar leases `PROCESSING` expirados tras una caída del worker.
+- [x] Recuperar leases `PROCESSING` expirados tras una caída del worker.
 - [x] Levantar el broker local y verificar healthcheck, particiones y retención.
 - [ ] Conectar el frontend a esos endpoints cuando el backend esté validado.

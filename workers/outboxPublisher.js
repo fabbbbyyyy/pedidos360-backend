@@ -65,6 +65,39 @@ const queryByStatus = async (status) => {
   return result.Items || [];
 };
 
+const recoverExpiredLeases = async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await dynamo.send(new QueryCommand({
+    TableName: tableName,
+    IndexName: 'StatusCreatedAtIndex',
+    KeyConditionExpression: 'gsi1pk = :status',
+    FilterExpression: 'leaseUntil <= :now',
+    ExpressionAttributeValues: {
+      ':status': 'STATUS#PROCESSING',
+      ':now': now,
+    },
+    ScanIndexForward: true,
+    Limit: batchSize,
+  }));
+
+  for (const item of result.Items || []) {
+    await dynamo.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { pk: item.pk, sk: item.sk },
+      UpdateExpression: 'SET #status = :pending, gsi1pk = :pendingIndex, updatedAt = :updatedAt REMOVE leaseUntil',
+      ConditionExpression: '#status = :processing AND leaseUntil <= :now',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':processing': 'PROCESSING',
+        ':pending': 'PENDING',
+        ':pendingIndex': 'STATUS#PENDING',
+        ':updatedAt': new Date().toISOString(),
+        ':now': now,
+      },
+    }));
+  }
+};
+
 const claim = async (item) => {
   const leaseUntil = Math.floor(Date.now() / 1000) + leaseSeconds;
   const result = await dynamo.send(new UpdateCommand({
@@ -134,6 +167,7 @@ const markPending = (item, error) => dynamo.send(new UpdateCommand({
 }));
 
 const processBatch = async () => {
+  await recoverExpiredLeases();
   const pending = await queryByStatus('PENDING');
   for (const item of pending) {
     let claimed;
@@ -162,7 +196,14 @@ const run = async () => {
   }
 };
 
-run().catch((error) => {
-  console.error('Outbox publisher detenido', error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  run().catch((error) => {
+    console.error('Outbox publisher detenido', error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  recoverExpiredLeases,
+  processBatch,
+};

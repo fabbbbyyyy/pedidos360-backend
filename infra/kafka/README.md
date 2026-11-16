@@ -54,6 +54,8 @@ docker compose --profile local --profile workers up -d analytics
 
 El publicador de outbox requiere además que exista `OUTBOX_TABLE` y que sus
 variables Kafka/SASL/TLS estén configuradas para el entorno correspondiente.
+Si el worker se detiene después de reclamar un evento, recupera automáticamente
+los leases `PROCESSING` cuyo `leaseUntil` ya expiró y los devuelve a `PENDING`.
 
 ## Configuración de producción
 
