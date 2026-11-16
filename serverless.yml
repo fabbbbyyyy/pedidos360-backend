@@ -30,6 +30,8 @@ provider:
     STAGE: ${self:provider.stage}
     ORDERS_TABLE: ${self:custom.ordersTable}
     CATALOG_TABLE: ${self:custom.catalogTable}
+    OUTBOX_TABLE: ${self:custom.outboxTable}
+    ANALYTICS_TABLE: ${self:custom.analyticsTable}
     S3_BUCKET: ${self:custom.imagesBucket}
     ALLOWED_ORIGIN: ${env:ALLOWED_ORIGIN, ''}
     NOTIFY_TOPIC_ARN:
@@ -59,6 +61,8 @@ provider:
 custom:
   ordersTable: pedidos360-orders-${self:provider.stage}
   catalogTable: pedidos360-catalog-${self:provider.stage}
+  outboxTable: pedidos360-outbox-${self:provider.stage}
+  analyticsTable: pedidos360-analytics-${self:provider.stage}
   imagesBucket: ${env:S3_BUCKET}
   allowedOrigins: ${file(./serverless.config.js):allowedOrigins}
   # serverless-dotenv-plugin por defecto inyecta TODAS las variables del
@@ -256,6 +260,17 @@ functions:
               - Arn
           batchSize: 1
           functionResponseType: ReportBatchItemFailures
+
+  reportAnalytics:
+    handler: src/functions/report/handler.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /api/report/analytics
+          authorizer:
+            name: azureAdAuthorizer
+            scopes:
+              - analytics.read
 
 resources:
   - ${file(infra/resources/dynamodb.yml)}

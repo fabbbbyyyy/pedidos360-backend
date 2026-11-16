@@ -4,5 +4,6 @@ node_modules/
 .esbuild/
 dist/
 coverage/
+infra/kafka/secrets/
 *.log
 .DS_Store

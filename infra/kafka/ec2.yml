@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Single-node Kafka KRaft broker and workers host for pedidos360
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.42.0.0/16
+  SubnetCidr:
+    Type: String
+    Default: 10.42.1.0/24
+  AllowedKafkaCidr:
+    Type: String
+    Default: 10.42.0.0/16
+    Description: CIDR allowed to reach Kafka on port 9092
+  InstanceProfileName:
+    Type: String
+    Default: LabRole
+  InstanceType:
+    Type: String
+    Default: t3.small
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  DataVolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+
+Resources:
+  KafkaVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka
+
+  KafkaInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka
+
+  KafkaVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref KafkaInternetGateway
+      VpcId: !Ref KafkaVpc
+
+  KafkaSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref KafkaVpc
+      CidrBlock: !Ref SubnetCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka-public
+
+  KafkaRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref KafkaVpc
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka-public
+
+  KafkaDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: KafkaVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref KafkaRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref KafkaInternetGateway
+
+  KafkaSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref KafkaRouteTable
+      SubnetId: !Ref KafkaSubnet
+
+  KafkaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Kafka KRaft broker access
+      VpcId: !Ref KafkaVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9092
+          ToPort: 9092
+          CidrIp: !Ref AllowedKafkaCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka
+
+  KafkaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfileName
+      SubnetId: !Ref KafkaSubnet
+      AssociatePublicIpAddress: true
+      SecurityGroupIds:
+        - !Ref KafkaSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref DataVolumeSize
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf install -y docker docker-compose-plugin
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          install -d -m 700 /opt/pedidos360-kafka/secrets
+          chown -R ec2-user:ec2-user /opt/pedidos360-kafka
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka
+
+  KafkaElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref KafkaInstance
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka
+
+Outputs:
+  VpcId:
+    Value: !Ref KafkaVpc
+  SubnetId:
+    Value: !Ref KafkaSubnet
+  VpcCidr:
+    Value: !Ref VpcCidr
+  InstanceId:
+    Value: !Ref KafkaInstance
+  ElasticIp:
+    Value: !Ref KafkaElasticIp
+  SecurityGroupId:
+    Value: !Ref KafkaSecurityGroup

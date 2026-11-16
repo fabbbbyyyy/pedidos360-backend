@@ -2,9 +2,12 @@ const { TransactWriteCommand } = require('@aws-sdk/lib-dynamodb');
 const { dynamoDb } = require('../../../libs/db/dynamoClient');
 const { buildHistoryEvent, appendHistoryEvent } = require('../../../libs/utils/orderHistory');
 const { publishNotification } = require('../../../libs/messaging/snsClient');
+const { createEvent } = require('../../../libs/messaging/eventContract');
+const { createOutboxItem } = require('../../../libs/messaging/outbox');
 
 const ORDERS_TABLE = process.env.ORDERS_TABLE;
 const CATALOG_TABLE = process.env.CATALOG_TABLE;
+const OUTBOX_TABLE = process.env.OUTBOX_TABLE;
 
 const changeOrderStatus = async ({ order, status, expectedVersion, user }) => {
   const version = order.version || 1;
@@ -16,6 +19,20 @@ const changeOrderStatus = async ({ order, status, expectedVersion, user }) => {
     user,
     changedAt: updatedAt,
   }));
+  const updatedOrder = { ...order, status, updatedAt, version: version + 1, history };
+  const event = createEvent({
+    eventId: `ORDER_STATUS_CHANGED#${order.id}#${updatedOrder.version}`,
+    eventType: 'ORDER_STATUS_CHANGED',
+    data: {
+      orderId: updatedOrder.id,
+      customerId: updatedOrder.customerId,
+      previousStatus: order.status,
+      status: updatedOrder.status,
+      version: updatedOrder.version,
+      updatedAt: updatedOrder.updatedAt,
+    },
+    occurredAt: updatedAt,
+  });
 
   const transactItems = [{
     Update: {
@@ -34,6 +51,13 @@ const changeOrderStatus = async ({ order, status, expectedVersion, user }) => {
       },
     },
   }];
+  transactItems.push({
+    Put: {
+      TableName: OUTBOX_TABLE,
+      Item: createOutboxItem(event),
+      ConditionExpression: 'attribute_not_exists(pk)',
+    },
+  });
 
   if (status === 'CANCELLED') {
     transactItems.push(...(order.items || []).map((item) => ({
@@ -58,19 +82,7 @@ const changeOrderStatus = async ({ order, status, expectedVersion, user }) => {
     throw err;
   }
 
-  const updatedOrder = { ...order, status, updatedAt, version: version + 1, history };
-  await publishNotification({
-    eventId: `ORDER_STATUS_CHANGED#${order.id}#${updatedOrder.version}`,
-    eventType: 'ORDER_STATUS_CHANGED',
-    data: {
-      orderId: updatedOrder.id,
-      customerId: updatedOrder.customerId,
-      previousStatus: order.status,
-      status: updatedOrder.status,
-      version: updatedOrder.version,
-      updatedAt: updatedOrder.updatedAt,
-    },
-  });
+  await publishNotification(event);
 
   return updatedOrder;
 };

@@ -64,6 +64,51 @@ Resources:
         - AttributeName: id
           KeyType: HASH
 
+  OutboxTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:custom.outboxTable}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: StatusCreatedAtIndex
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AnalyticsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:custom.analyticsTable}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
 Outputs:
   OrdersTableArn:
     Value: !GetAtt OrdersTable.Arn
@@ -73,3 +118,11 @@ Outputs:
     Value: ${self:custom.ordersTable}
   CatalogTableName:
     Value: ${self:custom.catalogTable}
+  OutboxTableArn:
+    Value: !GetAtt OutboxTable.Arn
+  OutboxTableName:
+    Value: ${self:custom.outboxTable}
+  AnalyticsTableArn:
+    Value: !GetAtt AnalyticsTable.Arn
+  AnalyticsTableName:
+    Value: ${self:custom.analyticsTable}

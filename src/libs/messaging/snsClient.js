@@ -1,20 +1,15 @@
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
+const { createEvent } = require('./eventContract');
 
 const sns = new SNSClient({});
 const NOTIFY_TOPIC_ARN = process.env.NOTIFY_TOPIC_ARN;
 
-const publishNotification = async ({ eventType, data, eventId }) => {
+const publishNotification = async ({ eventType, data, eventId, occurredAt, source }) => {
   if (!NOTIFY_TOPIC_ARN) {
     throw new Error('NOTIFY_TOPIC_ARN no está configurado');
   }
 
-  const event = {
-    eventId,
-    eventType,
-    source: 'pedidos360-orders',
-    occurredAt: new Date().toISOString(),
-    data,
-  };
+  const event = createEvent({ eventId, eventType, data, occurredAt, source });
 
   await sns.send(new PublishCommand({
     TopicArn: NOTIFY_TOPIC_ARN,

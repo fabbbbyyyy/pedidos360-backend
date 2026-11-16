@@ -49,6 +49,22 @@ Resources:
         deadLetterTargetArn: !GetAtt NotifyStatusDlq.Arn
         maxReceiveCount: 3
 
+  NotifyKafkaBridgeDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_KAFKA_BRIDGE_DLQ_NAME, 'pedidos360-notify-kafka-bridge-dlq-${self:provider.stage}'}
+      VisibilityTimeout: 60
+
+  NotifyKafkaBridgeQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${env:NOTIFY_KAFKA_BRIDGE_QUEUE_NAME, 'pedidos360-notify-kafka-bridge-${self:provider.stage}'}
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotifyKafkaBridgeDlq.Arn
+        maxReceiveCount: 3
+
   NotifyEmailQueuePolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
@@ -100,6 +116,23 @@ Resources:
               ArnEquals:
                 aws:SourceArn: !Ref NotifyTopic
 
+  NotifyKafkaBridgeQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotifyKafkaBridgeQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt NotifyKafkaBridgeQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref NotifyTopic
+
   NotifyEmailSubscription:
     Type: AWS::SNS::Subscription
     Properties:
@@ -136,6 +169,19 @@ Resources:
         eventType:
           - ORDER_STATUS_CHANGED
 
+  NotifyKafkaBridgeSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref NotifyTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotifyKafkaBridgeQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicyScope: MessageBody
+      FilterPolicy:
+        eventType:
+          - ORDER_CREATED
+          - ORDER_STATUS_CHANGED
+
 Outputs:
   NotifyTopicArn:
     Value: !Ref NotifyTopic
@@ -151,3 +197,7 @@ Outputs:
     Value: !Ref NotifyStatusQueue
   NotifyStatusDlqUrl:
     Value: !Ref NotifyStatusDlq
+  NotifyKafkaBridgeQueueUrl:
+    Value: !Ref NotifyKafkaBridgeQueue
+  NotifyKafkaBridgeDlqUrl:
+    Value: !Ref NotifyKafkaBridgeDlq

@@ -9,10 +9,13 @@ const { createOrderSchema } = require('../../../models/order.model');
 const { requireRoles } = require('../../../libs/middlewares/requireRoles');
 const { buildHistoryEvent } = require('../../../libs/utils/orderHistory');
 const { publishNotification } = require('../../../libs/messaging/snsClient');
+const { createEvent } = require('../../../libs/messaging/eventContract');
+const { createOutboxItem } = require('../../../libs/messaging/outbox');
 const PERMISSIONS = require('../../../libs/constants/permissions');
 
 const ORDERS_TABLE = process.env.ORDERS_TABLE;
 const CATALOG_TABLE = process.env.CATALOG_TABLE;
+const OUTBOX_TABLE = process.env.OUTBOX_TABLE;
 
 const orderKey = (id) => ({ pk: `ORDER#${id}`, sk: `ORDER#${id}` });
 const idempotencyKey = (key) => ({ pk: `IDEMPOTENCY#${key}`, sk: `IDEMPOTENCY#${key}` });
@@ -129,6 +132,12 @@ const handler = async (event) => {
     gsi3pk: `TENANT#${tenantId}`,
     gsi3sk: `${now}#${orderId}`,
   };
+  const event = createEvent({
+    eventId: `ORDER_CREATED#${order.id}`,
+    eventType: 'ORDER_CREATED',
+    data: { ...order, orderId: order.id },
+    occurredAt: now,
+  });
 
   // "Coordinación de stock" (responsabilidad de ms-pedidos360-orders):
   // se descuenta el stock de cada producto de forma atómica en la misma
@@ -158,6 +167,13 @@ const handler = async (event) => {
         ConditionExpression: 'attribute_not_exists(pk)',
       },
     },
+    {
+      Put: {
+        TableName: OUTBOX_TABLE,
+        Item: createOutboxItem(event),
+        ConditionExpression: 'attribute_not_exists(pk)',
+      },
+    },
   ];
 
   try {
@@ -171,11 +187,7 @@ const handler = async (event) => {
     throw err;
   }
 
-  await publishNotification({
-    eventId: `ORDER_CREATED#${order.id}`,
-    eventType: 'ORDER_CREATED',
-    data: { ...order, orderId: order.id },
-  });
+  await publishNotification(event);
   await dynamoDb.send(new UpdateCommand({
     TableName: ORDERS_TABLE,
     Key: idempotencyKey(requestIdempotencyKey),

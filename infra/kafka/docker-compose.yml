@@ -1,0 +1,98 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: pedidos360-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://${KAFKA_ADVERTISED_HOST:-localhost}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_MS: ${KAFKA_LOG_RETENTION_MS:-604800000}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  dynamodb:
+    profiles:
+      - local
+    image: amazon/dynamodb-local:2.6.1
+    container_name: pedidos360-dynamodb-local
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+    ports:
+      - "${DYNAMODB_PORT:-8000}:8000"
+
+  analytics:
+    profiles:
+      - workers
+    build:
+      context: ../..
+      dockerfile: infra/kafka/Dockerfile.workers
+    image: ${WORKERS_IMAGE:-pedidos360/workers:local}
+    container_name: pedidos360-analytics
+    restart: unless-stopped
+    command: ["node", "workers/analyticsConsumer.js"]
+    volumes:
+      - ${KAFKA_SECRETS_DIR:-./secrets}:/etc/kafka/secrets:ro
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT-}
+      ANALYTICS_TABLE: ${ANALYTICS_TABLE:-pedidos360-analytics-local}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:29092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-orders.events}
+      KAFKA_ANALYTICS_GROUP: ${KAFKA_ANALYTICS_GROUP:-analytics-service}
+      KAFKA_ANALYTICS_FROM_BEGINNING: ${KAFKA_ANALYTICS_FROM_BEGINNING:-false}
+      KAFKA_TLS: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  outbox-publisher:
+    profiles:
+      - workers
+    build:
+      context: ../..
+      dockerfile: infra/kafka/Dockerfile.workers
+    image: ${WORKERS_IMAGE:-pedidos360/workers:local}
+    container_name: pedidos360-outbox-publisher
+    restart: unless-stopped
+    command: ["node", "workers/outboxPublisher.js"]
+    volumes:
+      - ${KAFKA_SECRETS_DIR:-./secrets}:/etc/kafka/secrets:ro
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT-}
+      OUTBOX_TABLE: ${OUTBOX_TABLE:-pedidos360-outbox-local}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:29092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-orders.events}
+      KAFKA_TLS: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+volumes:
+  kafka_data:

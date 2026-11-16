@@ -13,4 +13,7 @@ module.exports = {
     updateStatus: [ROLES.ADMIN, ROLES.OPERADOR],
     delete: [ROLES.ADMIN, ROLES.OPERADOR, ROLES.CLIENTE],
   },
+  analytics: {
+    read: [ROLES.ADMIN, ROLES.AUDITOR, ROLES.OPERADOR],
+  },
 };
