@@ -132,7 +132,7 @@ const handler = async (event) => {
     gsi3pk: `TENANT#${tenantId}`,
     gsi3sk: `${now}#${orderId}`,
   };
-  const event = createEvent({
+  const orderEvent = createEvent({
     eventId: `ORDER_CREATED#${order.id}`,
     eventType: 'ORDER_CREATED',
     data: { ...order, orderId: order.id },
@@ -170,7 +170,7 @@ const handler = async (event) => {
     {
       Put: {
         TableName: OUTBOX_TABLE,
-        Item: createOutboxItem(event),
+        Item: createOutboxItem(orderEvent),
         ConditionExpression: 'attribute_not_exists(pk)',
       },
     },
@@ -187,7 +187,7 @@ const handler = async (event) => {
     throw err;
   }
 
-  await publishNotification(event);
+  await publishNotification(orderEvent);
   await dynamoDb.send(new UpdateCommand({
     TableName: ORDERS_TABLE,
     Key: idempotencyKey(requestIdempotencyKey),
