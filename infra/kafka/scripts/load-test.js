@@ -1,9 +1,9 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
 
-const total = Number(process.env.LOAD_TEST_TOTAL || 100);
-const dltCount = Number(process.env.LOAD_TEST_DLT_COUNT || 15);
-const retryCount = Number(process.env.LOAD_TEST_RETRY_COUNT || 10);
+const total = Number(process.env.LOAD_TEST_TOTAL || 5000);
+const dltCount = Number(process.env.LOAD_TEST_DLT_COUNT || 0);
+const retryCount = Number(process.env.LOAD_TEST_RETRY_COUNT || 0);
 const mode = process.env.LOAD_TEST_MODE || 'insert';
 const tableName = process.env.OUTBOX_TABLE;
 const region = process.env.AWS_REGION || 'us-east-1';

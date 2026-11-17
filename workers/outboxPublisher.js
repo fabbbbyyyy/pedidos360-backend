@@ -115,15 +115,10 @@ const claim = async (item) => {
     },
     ReturnValues: 'ALL_NEW',
   }));
+  if (!result.Attributes) {
+    throw new Error(`DynamoDB no devolvió el evento reclamado ${item.eventId}`);
+  }
   return result.Attributes;
-};
-
-const publish = async (item) => {
-  await producer.send({
-    topic,
-    acks: -1,
-    messages: [buildKafkaMessage(item)],
-  });
 };
 
 const buildKafkaMessage = (item) => ({
@@ -175,30 +170,54 @@ const markPending = (item, error) => dynamo.send(new UpdateCommand({
 const processBatch = async () => {
   await recoverExpiredLeases();
   const pending = await queryByStatus('PENDING');
-  for (const item of pending) {
-    let claimed;
+
+  const claimResults = await Promise.all(pending.map(async (item) => {
     try {
-      claimed = await claim(item);
-      await publish(claimed);
-      await markPublished(claimed);
+      return await claim(item);
     } catch (error) {
-      if (claimed) {
-        await markPending(claimed, error);
+      if (error.name !== 'ConditionalCheckFailedException') {
+        console.error('No se pudo reclamar evento de outbox', {
+          eventId: item.eventId,
+          error: error.message,
+        });
       }
+      return null;
+    }
+  }));
+  const claimed = claimResults.filter(Boolean);
+  if (claimed.length === 0) {
+    return false;
+  }
+
+  try {
+    await producer.send({
+      topic,
+      acks: -1,
+      messages: claimed.map(buildKafkaMessage),
+    });
+  } catch (error) {
+    await Promise.all(claimed.map(async (item) => {
+      await markPending(item, error);
       console.error('No se pudo publicar evento de outbox', {
         eventId: item.eventId,
         error: error.message,
       });
-    }
+    }));
+    return false;
   }
+
+  await Promise.all(claimed.map(markPublished));
+  return pending.length === batchSize;
 };
 
 const run = async () => {
   await producer.connect();
   console.log('Outbox publisher conectado a Kafka');
   while (true) {
-    await processBatch();
-    await new Promise((resolve) => setTimeout(resolve, pollMilliseconds));
+    const hasMore = await processBatch();
+    if (!hasMore) {
+      await new Promise((resolve) => setTimeout(resolve, pollMilliseconds));
+    }
   }
 };
 

@@ -48,6 +48,12 @@ const kafka = new Kafka(kafkaOptions);
 const consumer = kafka.consumer({ groupId, allowAutoTopicCreation: false });
 const dltProducer = kafka.producer({ idempotent: true, maxInFlightRequests: 1 });
 
+const isTransactionConflict = (error) => error.name === 'TransactionCanceledException'
+  && error.CancellationReasons?.some(({ Code }) => Code === 'TransactionConflict');
+
+const isDuplicateEvent = (error) => error.name === 'TransactionCanceledException'
+  && error.CancellationReasons?.some(({ Code }) => Code === 'ConditionalCheckFailed');
+
 const buildDltMessage = ({ message, error, sourceTopic }) => ({
   key: message.key?.toString() || null,
   value: JSON.stringify({
@@ -70,21 +76,55 @@ const publishToDlt = async ({ message, error }) => {
 };
 
 const processMessage = async ({ message }) => {
-  let event;
-  try {
-    event = parseEvent(message.value.toString());
-    await dynamo.send(new TransactWriteCommand({
-      TransactItems: buildAnalyticsTransaction({ event, tableName }),
-    }));
-  } catch (error) {
-    const isDuplicate = error.name === 'TransactionCanceledException'
-      && error.CancellationReasons?.some(({ Code }) => Code === 'ConditionalCheckFailed');
-    if (isDuplicate) {
-      console.warn('Evento de analítica ya procesado', { eventId: event.eventId });
-    } else {
-      throw error;
+  const event = parseEvent(message.value.toString());
+  let conflictAttempt = 0;
+
+  while (true) {
+    try {
+      await dynamo.send(new TransactWriteCommand({
+        TransactItems: buildAnalyticsTransaction({ event, tableName }),
+      }));
+      return;
+    } catch (error) {
+      if (!isTransactionConflict(error)) {
+        if (isDuplicateEvent(error)) {
+          console.warn('Evento de analítica ya procesado', { eventId: event.eventId });
+          return;
+        }
+        throw error;
+      }
+
+      conflictAttempt += 1;
+      const backoffMs = Math.min(1000, 25 * (2 ** Math.min(conflictAttempt - 1, 5)));
+      const delayMs = backoffMs + Math.floor(Math.random() * backoffMs);
+      console.warn('Reintentando transacción de analytics por conflicto', {
+        eventId: event.eventId,
+        attempt: conflictAttempt,
+        delayMs,
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
+};
+
+const handleMessage = async ({ topic: messageTopic, partition, message }) => {
+  try {
+    await processMessage({ message });
+  } catch (error) {
+    await publishToDlt({ message, error });
+    console.error('Evento enviado a la DLT de analytics', {
+      topic: messageTopic,
+      partition,
+      offset: message.offset,
+      error: error.message,
+    });
+  }
+
+  await consumer.commitOffsets([{
+    topic: messageTopic,
+    partition,
+    offset: (BigInt(message.offset) + 1n).toString(),
+  }]);
 };
 
 const run = async () => {
@@ -94,24 +134,7 @@ const run = async () => {
   console.log(`Analytics consumer conectado a ${topic} con group ${groupId}`);
   await consumer.run({
     autoCommit: false,
-    eachMessage: async ({ topic: messageTopic, partition, message }) => {
-      try {
-        await processMessage({ message });
-      } catch (error) {
-        await publishToDlt({ message, error });
-        console.error('Evento enviado a la DLT de analytics', {
-          topic: messageTopic,
-          partition,
-          offset: message.offset,
-          error: error.message,
-        });
-      }
-      await consumer.commitOffsets([{
-        topic: messageTopic,
-        partition,
-        offset: (BigInt(message.offset) + 1n).toString(),
-      }]);
-    },
+    eachMessage: handleMessage,
   });
 };
 
@@ -130,4 +153,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildDltMessage, publishToDlt };
+module.exports = { buildDltMessage, handleMessage, processMessage, publishToDlt };

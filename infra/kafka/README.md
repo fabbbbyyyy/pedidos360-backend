@@ -60,24 +60,37 @@ los leases `PROCESSING` cuyo `leaseUntil` ya expiró y los devuelve a `PENDING`.
 ## Carga de prueba y DLT
 
 `scripts/load-test.js` inserta eventos directamente en la tabla Outbox usando
-el instance profile de la EC2. Genera 100 eventos por defecto: 75 válidos, 15
-inválidos que deben llegar a `orders.events.dlt` y 10 sin `data`, que deben
-permanecer en `PENDING` para probar reintentos del publisher. Ejecutarlo
-únicamente en un entorno de prueba o aceptando que creará datos de prueba en
-las métricas:
+el instance profile de la EC2. Por defecto genera 5.000 eventos válidos para
+medir el flujo normal. Ejecutarlo únicamente en un entorno de prueba. Para
+mantener la medición de throughput separada, los casos de error se ejecutan
+después en una prueba negativa de 25 eventos: 15 deben llegar a
+`orders.events.dlt` y 10 sin `data` deben quedarse en `PENDING` mientras el
+publisher reintenta.
 
 ```bash
-LOAD_TEST_TOTAL=100 LOAD_TEST_DLT_COUNT=15 LOAD_TEST_RETRY_COUNT=10 \
-docker compose exec -T outbox-publisher node - < scripts/load-test.js
+docker compose exec -T \
+  -e LOAD_TEST_TOTAL=5000 \
+  -e LOAD_TEST_DLT_COUNT=0 \
+  -e LOAD_TEST_RETRY_COUNT=0 \
+  outbox-publisher node - < scripts/load-test.js
 ```
 
-El comando imprime un `runId`. Guardarlo para limpiar únicamente los datos
-generados por esa ejecución:
+Guardar el `runId` que imprime. Después de que esta carga termine, ejecutar la
+prueba negativa y guardar también su `runId`:
 
 ```bash
-LOAD_TEST_MODE=cleanup LOAD_TEST_RUN_ID=load-test-XXXXXXXX \
-docker compose exec -T outbox-publisher node - < scripts/load-test.js
+docker compose exec -T \
+  -e LOAD_TEST_TOTAL=25 \
+  -e LOAD_TEST_DLT_COUNT=15 \
+  -e LOAD_TEST_RETRY_COUNT=10 \
+  outbox-publisher node - < scripts/load-test.js
 ```
+
+Las filas de Outbox de cada ejecución pueden limpiarse por separado usando su
+`runId` y el mismo total (`5000` o `25`). La limpieza no elimina mensajes Kafka
+ni revierte métricas ya escritas en Analytics. No reutilizar un `runId` en una
+nueva ejecución. Los comandos de limpieza y verificación están en
+[LOAD-TEST.md](./LOAD-TEST.md).
 
 La imagen de workers debe incluir primero el consumidor con soporte para
 `orders.events.dlt`. Verificar los resultados con:

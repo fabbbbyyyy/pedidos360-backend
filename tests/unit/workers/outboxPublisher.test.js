@@ -110,4 +110,60 @@ describe('outbox publisher lease recovery', () => {
       messages: [expect.objectContaining({ key: 'order-1' })],
     }));
   });
+
+  test('publishes a claimed batch in one Kafka request', async () => {
+    const items = ['order-1', 'order-2'].map((orderId, index) => ({
+      pk: `OUTBOX#${index + 1}`,
+      sk: `EVENT#${index + 1}`,
+      eventId: `event-${index + 1}`,
+      eventType: 'ORDER_CREATED',
+      source: 'load-test',
+      occurredAt: '2026-11-17T19:00:00.000Z',
+      data: { orderId },
+    }));
+    dynamo.send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: items })
+      .mockResolvedValueOnce({ Attributes: items[0] })
+      .mockResolvedValueOnce({ Attributes: items[1] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await processBatch();
+
+    expect(producerSend).toHaveBeenCalledTimes(1);
+    expect(producerSend).toHaveBeenCalledWith(expect.objectContaining({
+      topic: 'orders.events',
+      acks: -1,
+      messages: [
+        expect.objectContaining({ key: 'order-1' }),
+        expect.objectContaining({ key: 'order-2' }),
+      ],
+    }));
+  });
+
+  test('returns a claimed batch to pending when Kafka rejects the send', async () => {
+    const item = {
+      pk: 'OUTBOX#1',
+      sk: 'EVENT#1',
+      eventId: 'event-1',
+      eventType: 'ORDER_CREATED',
+      source: 'load-test',
+      occurredAt: '2026-11-17T19:00:00.000Z',
+      data: { orderId: 'order-1' },
+    };
+    dynamo.send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [item] })
+      .mockResolvedValueOnce({ Attributes: item })
+      .mockResolvedValueOnce({});
+    producerSend.mockRejectedValueOnce(new Error('Kafka unavailable'));
+
+    await expect(processBatch()).resolves.toBe(false);
+
+    expect(dynamo.send.mock.calls[3][0].input).toEqual(expect.objectContaining({
+      ConditionExpression: '#status = :processing',
+      UpdateExpression: expect.stringContaining(':pendingIndex'),
+    }));
+  });
 });
