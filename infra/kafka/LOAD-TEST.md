@@ -83,7 +83,9 @@ docker compose logs -f --since=2m outbox-publisher
 
 Los dos publishers reclaman filas de Outbox mediante leases; no se espera que
 cada uno procese exactamente la mitad. Los logs muestran errores y conexiones,
-no una linea por cada publicacion exitosa.
+no una linea por cada publicacion exitosa. Un mismo `eventId` puede aparecer
+en ambos logs si un fallo lo devuelve a `PENDING` y el otro publisher lo
+reclama en un intento posterior; el lease evita que ambos lo reclamen a la vez.
 
 **Broker 3, sesion de monitor: seguir Analytics:**
 
@@ -133,6 +135,28 @@ Este consumer de observacion usa un grupo temporal independiente y no altera
 los offsets de `analytics-service`. Cuando termina por 30 segundos sin nuevos
 mensajes, el total debe ser `5000`. Si sigue imprimiendo cada 100, la carga
 sigue avanzando. Presionar `Ctrl+C` para detenerlo manualmente.
+
+Para ver el payload de **cada evento nuevo** (carga o pedido normal), abrir una
+sola terminal adicional en cualquiera de los brokers antes de iniciar la
+carga o crear el pedido:
+
+```bash
+cd /opt/pedidos360-kafka
+docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:29092 \
+  --topic orders.events \
+  --property print.timestamp=true \
+  --property print.partition=true \
+  --property print.offset=true \
+  --property print.key=true
+```
+
+El consumidor muestra timestamp, particion, offset, key y el payload JSON de
+cada mensaje publicado desde que se inicia. No agregar `--from-beginning` para
+evitar volcar el historial, ni usar el grupo `analytics-service`: esta pantalla
+observa mensajes publicados en Kafka, no confirma que Analytics ya termino de
+procesarlos. Presionar `Ctrl+C` para detenerla.
 
 ## 4. Ejecutar la carga de 5.000 eventos validos
 
@@ -212,6 +236,10 @@ docker compose logs -f --since=2m outbox-publisher \
 Esos eventos fallan en el publisher, permanecen `PENDING` y acumulan
 `attempts`; no llegan a Kafka ni a la DLT. Limpiar esas filas despues de
 confirmar los reintentos para que el publisher no siga procesandolas.
+Los 15 eventos DLT conservan `data` y solo omiten `eventType`: deben llegar a
+Kafka y luego a `orders.events.dlt`. Si tambien aparecen con error
+`data.orderId`, detener nuevas pruebas y revisar el publisher/despliegue:
+un evento sin `data` no debe impedir publicar los demas del lote.
 
 ## 6. Flujo esperado
 

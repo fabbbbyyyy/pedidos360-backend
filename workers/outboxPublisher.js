@@ -189,14 +189,30 @@ const processBatch = async () => {
     return false;
   }
 
+  const publishable = [];
+  for (const item of claimed) {
+    try {
+      publishable.push({ item, message: buildKafkaMessage(item) });
+    } catch (error) {
+      await markPending(item, error);
+      console.error('Evento de outbox inválido; permanece pendiente', {
+        eventId: item.eventId,
+        error: error.message,
+      });
+    }
+  }
+  if (publishable.length === 0) {
+    return false;
+  }
+
   try {
     await producer.send({
       topic,
       acks: -1,
-      messages: claimed.map(buildKafkaMessage),
+      messages: publishable.map(({ message }) => message),
     });
   } catch (error) {
-    await Promise.all(claimed.map(async (item) => {
+    await Promise.all(publishable.map(async ({ item }) => {
       await markPending(item, error);
       console.error('No se pudo publicar evento de outbox', {
         eventId: item.eventId,
@@ -206,7 +222,7 @@ const processBatch = async () => {
     return false;
   }
 
-  await Promise.all(claimed.map(markPublished));
+  await Promise.all(publishable.map(({ item }) => markPublished(item)));
   return pending.length === batchSize;
 };
 

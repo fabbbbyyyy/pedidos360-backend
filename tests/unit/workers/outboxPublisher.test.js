@@ -142,6 +142,52 @@ describe('outbox publisher lease recovery', () => {
     }));
   });
 
+  test('keeps malformed events pending without blocking valid events in their batch', async () => {
+    const items = [
+      {
+        pk: 'OUTBOX#retry',
+        sk: 'EVENT#retry',
+        eventId: 'retry-event',
+        source: 'load-test',
+        occurredAt: '2026-11-17T19:00:00.000Z',
+      },
+      {
+        pk: 'OUTBOX#dlt',
+        sk: 'EVENT#dlt',
+        eventId: 'dlt-event',
+        source: 'load-test',
+        occurredAt: '2026-11-17T19:00:01.000Z',
+        data: { orderId: 'order-dlt' },
+      },
+    ];
+    dynamo.send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: items })
+      .mockResolvedValueOnce({ Attributes: items[0] })
+      .mockResolvedValueOnce({ Attributes: items[1] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await processBatch();
+
+    expect(producerSend).toHaveBeenCalledTimes(1);
+    expect(producerSend).toHaveBeenCalledWith(expect.objectContaining({
+      topic: 'orders.events',
+      messages: [
+        expect.objectContaining({ key: 'order-dlt' }),
+      ],
+    }));
+    expect(JSON.parse(producerSend.mock.calls[0][0].messages[0].value)).not.toHaveProperty('eventType');
+    expect(dynamo.send.mock.calls[4][0].input).toEqual(expect.objectContaining({
+      Key: { pk: 'OUTBOX#retry', sk: 'EVENT#retry' },
+      UpdateExpression: expect.stringContaining(':pendingIndex'),
+    }));
+    expect(dynamo.send.mock.calls[5][0].input).toEqual(expect.objectContaining({
+      Key: { pk: 'OUTBOX#dlt', sk: 'EVENT#dlt' },
+      UpdateExpression: expect.stringContaining(':publishedIndex'),
+    }));
+  });
+
   test('returns a claimed batch to pending when Kafka rejects the send', async () => {
     const item = {
       pk: 'OUTBOX#1',
