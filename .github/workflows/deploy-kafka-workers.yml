@@ -341,23 +341,25 @@ jobs:
             --config retention.ms=2592000000 \
             --config min.insync.replicas=2
           for topic in orders.events orders.events.dlt; do
-            if topic_description=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+            topic_description=''
+            if topic_description=\$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
               --bootstrap-server localhost:29092 \
               --describe --topic "\$topic" 2>&1); then
               :
             else
               describe_status=\$?
-              printf 'No se pudo describir %s (exit %s):\n%s\n' "\$topic" "\$describe_status" "\$topic_description" >&2
+              printf 'No se pudo describir %s (exit %s):\n%s\n' "\$topic" "\$describe_status" "\${topic_description-}" >&2
               exit "\$describe_status"
             fi
             if [ -z "\$topic_description" ]; then
-              if topic_list=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+              topic_list=''
+              if topic_list=\$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
                 --bootstrap-server localhost:29092 \
                 --list 2>&1); then
                 :
               else
                 list_status=\$?
-                printf 'No se pudo listar topics (exit %s):\n%s\n' "\$list_status" "\$topic_list" >&2
+                printf 'No se pudo listar topics (exit %s):\n%s\n' "\$list_status" "\${topic_list-}" >&2
                 exit "\$list_status"
               fi
               printf 'El describe de %s no devolvió salida. Topics visibles:\n%s\n' "\$topic" "\$topic_list" >&2
