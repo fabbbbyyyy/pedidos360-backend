@@ -65,11 +65,10 @@ jobs:
           ALLOWED_KAFKA_CIDR: ${{ secrets.KAFKA_ALLOWED_KAFKA_CIDR }}
           INSTANCE_PROFILE_NAME: ${{ secrets.KAFKA_INSTANCE_PROFILE_NAME }}
           IAM_ROLE_NAME: ${{ secrets.KAFKA_IAM_ROLE_NAME }}
-          INSTANCE_TYPE: ${{ secrets.KAFKA_INSTANCE_TYPE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           KAFKA_ENV_B64: ${{ secrets.KAFKA_ENV_B64 }}
-          KAFKA_CA_B64: ${{ secrets.KAFKA_CA_B64 }}
+          KAFKA_CLUSTER_ID: ${{ vars.KAFKA_CLUSTER_ID }}
           WORKERS_IMAGE: ${{ needs.build.outputs.image }}
         shell: bash
         run: |
@@ -79,15 +78,15 @@ jobs:
           : "${GHCR_USERNAME:?GHCR_USERNAME is required}"
           : "${GHCR_READ_TOKEN:?GHCR_READ_TOKEN is required}"
           : "${KAFKA_ENV_B64:?KAFKA_ENV_B64 is required}"
+          : "${KAFKA_CLUSTER_ID:?Set the stable, non-secret GitHub Actions variable KAFKA_CLUSTER_ID}"
 
           stack_status=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
             --query 'Stacks[0].StackStatus' \
             --output text 2>/dev/null || true)
           if [ "$stack_status" = "ROLLBACK_COMPLETE" ]; then
-            echo "El stack está en ROLLBACK_COMPLETE; se eliminará antes de recrearlo."
-            aws cloudformation delete-stack --stack-name "$STACK_NAME"
-            aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+            echo "El stack está en ROLLBACK_COMPLETE; detenerse y revisar recursos antes de cualquier eliminación." >&2
+            exit 1
           fi
 
           if [ -z "$INSTANCE_PROFILE_NAME" ]; then
@@ -109,7 +108,7 @@ jobs:
             --parameter-overrides \
               AllowedKafkaCidr="${ALLOWED_KAFKA_CIDR:-10.42.0.0/16}" \
               InstanceProfileName="$INSTANCE_PROFILE_NAME" \
-              InstanceType="${INSTANCE_TYPE:-t3.small}"; then
+              InstanceType=t3.medium; then
             echo "CloudFormation rechazó la plantilla. Eventos de diagnóstico:"
             aws cloudformation describe-stack-events \
               --stack-name "$STACK_NAME" \
@@ -118,27 +117,86 @@ jobs:
             exit 1
           fi
 
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
+          BROKER1_ID=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker1InstanceId`].OutputValue' \
             --output text)
-          ELASTIC_IP=$(aws cloudformation describe-stacks \
+          BROKER2_ID=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
-            --query 'Stacks[0].Outputs[?OutputKey==`ElasticIp`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker2InstanceId`].OutputValue' \
+            --output text)
+          BROKER3_ID=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker3InstanceId`].OutputValue' \
+            --output text)
+          BROKER1_IP=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker1PrivateIp`].OutputValue' \
+            --output text)
+          BROKER2_IP=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker2PrivateIp`].OutputValue' \
+            --output text)
+          BROKER3_IP=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`Broker3PrivateIp`].OutputValue' \
             --output text)
 
-          for attempt in $(seq 1 30); do
-            if aws ssm describe-instance-information \
-              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
-              --query 'InstanceInformationList[0].PingStatus' \
-              --output text | grep -q Online; then
-              break
-            fi
-            if [ "$attempt" -eq 30 ]; then
-              echo "EC2 no quedó Online en SSM" >&2
+          BROKER_IDS=("$BROKER1_ID" "$BROKER2_ID" "$BROKER3_ID")
+          BROKER_IPS=("$BROKER1_IP" "$BROKER2_IP" "$BROKER3_IP")
+          for value in "${BROKER_IDS[@]}" "${BROKER_IPS[@]}"; do
+            if [ -z "$value" ] || [ "$value" = "None" ]; then
+              echo "CloudFormation no devolvió los tres IDs/IPs privados de broker." >&2
               exit 1
             fi
-            sleep 10
+          done
+          if [ "$BROKER1_ID" = "$BROKER2_ID" ] || [ "$BROKER1_ID" = "$BROKER3_ID" ] || [ "$BROKER2_ID" = "$BROKER3_ID" ]; then
+            echo "Los IDs de las tres EC2 no son distintos." >&2
+            exit 1
+          fi
+
+          stack_instance_count=$(aws cloudformation list-stack-resources \
+            --stack-name "$STACK_NAME" \
+            --query 'length(StackResourceSummaries[?ResourceType==`AWS::EC2::Instance`])' \
+            --output text)
+          if [ "$stack_instance_count" != "3" ]; then
+            echo "El stack contiene $stack_instance_count recursos EC2; se esperaban exactamente 3." >&2
+            exit 1
+          fi
+          running_count=$(aws ec2 describe-instances \
+            --instance-ids "${BROKER_IDS[@]}" \
+            --query 'Reservations[].Instances[].State.Name' \
+            --output text | awk '{ for (i=1; i<=NF; i++) if ($i=="running") n++ } END { print n+0 }')
+          if [ "$running_count" != "3" ]; then
+            echo "No hay exactamente tres brokers en estado running." >&2
+            exit 1
+          fi
+          az_count=$(aws ec2 describe-instances \
+            --instance-ids "${BROKER_IDS[@]}" \
+            --query 'Reservations[].Instances[].Placement.AvailabilityZone' \
+            --output text | tr '\t' '\n' | sort -u | awk 'NF { n++ } END { print n+0 }')
+          if [ "$az_count" != "1" ]; then
+            echo "Los tres brokers no están en la misma AZ." >&2
+            exit 1
+          fi
+
+          KAFKA_BROKERS="${BROKER1_IP}:29092,${BROKER2_IP}:29092,${BROKER3_IP}:29092"
+          KAFKA_CONTROLLER_QUORUM_VOTERS="1@${BROKER1_IP}:29093,2@${BROKER2_IP}:29093,3@${BROKER3_IP}:29093"
+
+          for INSTANCE_ID in "${BROKER_IDS[@]}"; do
+            for attempt in $(seq 1 30); do
+              if aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text | grep -q Online; then
+                break
+              fi
+              if [ "$attempt" -eq 30 ]; then
+                echo "EC2 $INSTANCE_ID no quedó Online en SSM" >&2
+                exit 1
+              fi
+              sleep 10
+            done
           done
 
           install_commands=$(cat <<EOF
@@ -166,67 +224,124 @@ jobs:
           EOF
           )
           install_parameters=$(jq -n --arg commands "$install_commands" '{commands: [$commands]}')
-          install_command_id=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "Wait for Docker and Compose" \
-            --parameters "$install_parameters" \
-            --query 'Command.CommandId' \
-            --output text)
-          if ! aws ssm wait command-executed \
-            --command-id "$install_command_id" \
-            --instance-id "$INSTANCE_ID"; then
-            aws ssm get-command-invocation \
+          for INSTANCE_ID in "${BROKER_IDS[@]}"; do
+            install_command_id=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Wait for Docker and Compose" \
+              --parameters "$install_parameters" \
+              --query 'Command.CommandId' \
+              --output text)
+            if ! aws ssm wait command-executed \
               --command-id "$install_command_id" \
-              --instance-id "$INSTANCE_ID" \
-              --query '[Status,StandardOutputContent,StandardErrorContent]' \
-              --output text || true
-            exit 1
-          fi
+              --instance-id "$INSTANCE_ID"; then
+              aws ssm get-command-invocation \
+                --command-id "$install_command_id" \
+                --instance-id "$INSTANCE_ID" \
+                --query '[Status,StandardOutputContent,StandardErrorContent]' \
+                --output text || true
+              exit 1
+            fi
+          done
 
           compose_b64=$(base64 -w0 infra/kafka/docker-compose.yml)
-          commands=$(cat <<EOF
+          for node_index in 0 1 2; do
+            node_id=$((node_index + 1))
+            INSTANCE_ID="${BROKER_IDS[$node_index]}"
+            PRIVATE_IP="${BROKER_IPS[$node_index]}"
+            node_env_b64=$(printf 'KAFKA_CLUSTER_ID=%s\nKAFKA_NODE_ID=%s\nKAFKA_BIND_ADDRESS=%s\nKAFKA_ADVERTISED_PRIVATE_HOST=%s\nKAFKA_ADVERTISED_HOST=%s\nKAFKA_CONTROLLER_QUORUM_VOTERS=%s\nKAFKA_BROKERS=%s\nKAFKA_PORT=9092\n' \
+              "$KAFKA_CLUSTER_ID" "$node_id" "$PRIVATE_IP" "$PRIVATE_IP" "$PRIVATE_IP" \
+              "$KAFKA_CONTROLLER_QUORUM_VOTERS" "$KAFKA_BROKERS" | base64 -w0)
+
+            worker_env_setup="printf '%s' '${KAFKA_ENV_B64}' | base64 -d > '${APP_DIR}/.env'; sed -i \"s/__KAFKA_ELASTIC_IP__/${ELASTIC_IP}/g\" '${APP_DIR}/.env'; sed -i -e '/^KAFKA_BROKERS=/d' -e '/^KAFKA_CLUSTER_ID=/d' -e '/^KAFKA_NODE_ID=/d' -e '/^KAFKA_BIND_ADDRESS=/d' -e '/^KAFKA_ADVERTISED_PRIVATE_HOST=/d' -e '/^KAFKA_ADVERTISED_HOST=/d' -e '/^KAFKA_CONTROLLER_QUORUM_VOTERS=/d' -e '/^KAFKA_PORT=/d' '${APP_DIR}/.env'; if [ -n '${KAFKA_CA_B64}' ]; then printf '%s' '${KAFKA_CA_B64}' | base64 -d > '${APP_DIR}/secrets/ca.crt'; chmod 600 '${APP_DIR}/secrets/ca.crt'; fi"
+
+            commands=$(cat <<EOF
           set -euo pipefail
           install -d -m 700 "${APP_DIR}/secrets"
           printf '%s' '${compose_b64}' | base64 -d > "${APP_DIR}/docker-compose.yml"
-          printf '%s' '${KAFKA_ENV_B64}' | base64 -d > "${APP_DIR}/.env"
-          sed -i "s/__KAFKA_ELASTIC_IP__/${ELASTIC_IP}/g" "${APP_DIR}/.env"
-          sed -i 's|^KAFKA_BROKERS=.*|KAFKA_BROKERS=kafka:29092|' "${APP_DIR}/.env"
-          if [ -n '${KAFKA_CA_B64}' ]; then
-            printf '%s' '${KAFKA_CA_B64}' | base64 -d > "${APP_DIR}/secrets/ca.crt"
-            chmod 600 "${APP_DIR}/secrets/ca.crt"
-          fi
+          $worker_env_setup
+          printf '%s' '${node_env_b64}' | base64 -d >> "${APP_DIR}/.env"
           chmod 600 "${APP_DIR}/.env"
-          echo '${GHCR_READ_TOKEN}' | docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin
           cd "${APP_DIR}"
           export WORKERS_IMAGE='${WORKERS_IMAGE}'
-          docker compose --profile workers pull analytics outbox-publisher
-          docker compose --profile workers up -d --no-build analytics outbox-publisher
+          docker compose pull kafka
+          docker compose up -d kafka
+          EOF
+          )
+            parameters=$(jq -n --arg commands "$commands" '{commands: [$commands]}')
+            command_id=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Configure KRaft broker ${node_id}" \
+              --parameters "$parameters" \
+              --query 'Command.CommandId' \
+              --output text)
+            if ! aws ssm wait command-executed \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID"; then
+              aws ssm get-command-invocation \
+                --command-id "$command_id" \
+                --instance-id "$INSTANCE_ID" \
+                --query '[Status,StandardOutputContent,StandardErrorContent]' \
+                --output text || true
+              exit 1
+            fi
+          done
+
+          INSTANCE_ID="$BROKER1_ID"
+          worker_commands=$(cat <<EOF
+          set -euo pipefail
+          cd "${APP_DIR}"
+          export WORKERS_IMAGE='${WORKERS_IMAGE}'
+          for attempt in \$(seq 1 60); do
+            if docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1; then
+              break
+            fi
+            if [ "\$attempt" -eq 60 ]; then
+              echo "Kafka quorum did not become ready" >&2
+              exit 1
+            fi
+            sleep 5
+          done
           docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
             --bootstrap-server localhost:29092 \
             --create --if-not-exists \
             --topic orders.events \
             --partitions 3 \
-            --replication-factor 1 \
-            --config retention.ms=604800000
+            --replication-factor 3 \
+            --config retention.ms=604800000 \
+            --config min.insync.replicas=2
           docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
             --bootstrap-server localhost:29092 \
             --create --if-not-exists \
             --topic orders.events.dlt \
             --partitions 1 \
-            --replication-factor 1 \
-            --config retention.ms=2592000000
-          docker compose --profile workers restart analytics outbox-publisher
-          docker image prune -f
+            --replication-factor 3 \
+            --config retention.ms=2592000000 \
+            --config min.insync.replicas=2
+          for topic in orders.events orders.events.dlt; do
+            topic_description=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:29092 \
+              --describe --topic "\$topic")
+            if ! printf '%s\n' "\$topic_description" | grep -q 'ReplicationFactor: 3'; then
+              echo "Topic \$topic must have replication factor 3; migrate it explicitly before deploying workers" >&2
+              exit 1
+            fi
+            docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh \
+              --bootstrap-server localhost:29092 \
+              --entity-type topics \
+              --entity-name "\$topic" \
+              --alter \
+              --add-config min.insync.replicas=2
+          done
           EOF
           )
 
-          parameters=$(jq -n --arg commands "$commands" '{commands: [$commands]}')
-
+          parameters=$(jq -n --arg commands "$worker_commands" '{commands: [$commands]}')
           deploy_command_id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "Deploy Kafka workers ${WORKERS_IMAGE}" \
+            --comment "Create replicated topics and deploy workers ${WORKERS_IMAGE}" \
             --parameters "$parameters" \
             --query 'Command.CommandId' \
             --output text)
@@ -257,3 +372,55 @@ jobs:
             echo "El comando SSM terminó con estado: $deploy_status" >&2
             exit 1
           fi
+
+          for worker_node_index in 0 1 2; do
+            node_id=$((worker_node_index + 1))
+            INSTANCE_ID="${BROKER_IDS[$worker_node_index]}"
+            if [ "$node_id" -eq 3 ]; then
+              worker_services="analytics"
+            else
+              worker_services="analytics outbox-publisher"
+            fi
+
+            worker_commands=$(cat <<EOF
+          set -euo pipefail
+          cd "${APP_DIR}"
+          export WORKERS_IMAGE='${WORKERS_IMAGE}'
+          if [ "${node_id}" -eq 3 ] && [ -n "\$(docker compose --profile workers ps -q outbox-publisher)" ]; then
+            docker compose --profile workers stop outbox-publisher
+          fi
+          echo '${GHCR_READ_TOKEN}' | docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin
+          docker compose --profile workers pull ${worker_services}
+          docker compose --profile workers up -d --no-build ${worker_services}
+          docker image prune -f
+          EOF
+          )
+
+            worker_parameters=$(jq -n --arg commands "$worker_commands" '{commands: [$commands]}')
+            worker_command_id=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Deploy workers on broker ${node_id}" \
+              --parameters "$worker_parameters" \
+              --query 'Command.CommandId' \
+              --output text)
+            if ! aws ssm wait command-executed \
+              --command-id "$worker_command_id" \
+              --instance-id "$INSTANCE_ID"; then
+              aws ssm get-command-invocation \
+                --command-id "$worker_command_id" \
+                --instance-id "$INSTANCE_ID" \
+                --query '[Status,StandardOutputContent,StandardErrorContent]' \
+                --output text || true
+              exit 1
+            fi
+            worker_status=$(aws ssm get-command-invocation \
+              --command-id "$worker_command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text)
+            if [ "$worker_status" != "Success" ]; then
+              echo "El despliegue de workers en broker ${node_id} terminó con estado: $worker_status" >&2
+              exit 1
+            fi
+          done

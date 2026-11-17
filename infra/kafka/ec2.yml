@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Single-node Kafka KRaft broker and workers host for pedidos360
+Description: Three-node combined-role Kafka KRaft cluster for pedidos360
 
 Parameters:
   VpcCidr:
@@ -17,7 +17,9 @@ Parameters:
     Default: LabRole
   InstanceType:
     Type: String
-    Default: t3.small
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
   AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
@@ -100,6 +102,24 @@ Resources:
         - Key: Name
           Value: pedidos360-kafka
 
+  KafkaPeerListenerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref KafkaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 29092
+      ToPort: 29092
+      SourceSecurityGroupId: !Ref KafkaSecurityGroup
+
+  KafkaControllerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref KafkaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 29093
+      ToPort: 29093
+      SourceSecurityGroupId: !Ref KafkaSecurityGroup
+
   KafkaInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -141,6 +161,88 @@ Resources:
         - Key: Name
           Value: pedidos360-kafka
 
+  KafkaBroker2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfileName
+      SubnetId: !Ref KafkaSubnet
+      SecurityGroupIds:
+        - !Ref KafkaSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref DataVolumeSize
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > >(tee /var/log/pedidos360-kafka-bootstrap.log | logger -t pedidos360-kafka-bootstrap -s 2>/dev/console) 2>&1
+          dnf install -y docker ca-certificates
+          systemctl enable --now docker
+          if ! docker compose version >/dev/null 2>&1; then
+            install -d -m 755 /usr/local/lib/docker/cli-plugins
+            curl -fL \
+              https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
+          if ! systemctl is-enabled amazon-ssm-agent >/dev/null 2>&1; then
+            dnf install -y amazon-ssm-agent
+          fi
+          systemctl enable --now amazon-ssm-agent
+          usermod -aG docker ec2-user
+          install -d -m 700 /opt/pedidos360-kafka/secrets
+          chown -R ec2-user:ec2-user /opt/pedidos360-kafka
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka-2
+
+  KafkaBroker3:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfileName
+      SubnetId: !Ref KafkaSubnet
+      SecurityGroupIds:
+        - !Ref KafkaSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref DataVolumeSize
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > >(tee /var/log/pedidos360-kafka-bootstrap.log | logger -t pedidos360-kafka-bootstrap -s 2>/dev/console) 2>&1
+          dnf install -y docker ca-certificates
+          systemctl enable --now docker
+          if ! docker compose version >/dev/null 2>&1; then
+            install -d -m 755 /usr/local/lib/docker/cli-plugins
+            curl -fL \
+              https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
+          if ! systemctl is-enabled amazon-ssm-agent >/dev/null 2>&1; then
+            dnf install -y amazon-ssm-agent
+          fi
+          systemctl enable --now amazon-ssm-agent
+          usermod -aG docker ec2-user
+          install -d -m 700 /opt/pedidos360-kafka/secrets
+          chown -R ec2-user:ec2-user /opt/pedidos360-kafka
+      Tags:
+        - Key: Name
+          Value: pedidos360-kafka-3
+
   KafkaElasticIp:
     Type: AWS::EC2::EIP
     DependsOn: KafkaVpcGatewayAttachment
@@ -160,6 +262,20 @@ Outputs:
     Value: !Ref VpcCidr
   InstanceId:
     Value: !Ref KafkaInstance
+  Broker1InstanceId:
+    Value: !Ref KafkaInstance
+  Broker2InstanceId:
+    Value: !Ref KafkaBroker2
+  Broker3InstanceId:
+    Value: !Ref KafkaBroker3
+  Broker1PrivateIp:
+    Value: !GetAtt KafkaInstance.PrivateIp
+  Broker2PrivateIp:
+    Value: !GetAtt KafkaBroker2.PrivateIp
+  Broker3PrivateIp:
+    Value: !GetAtt KafkaBroker3.PrivateIp
+  AvailabilityZone:
+    Value: !GetAtt KafkaInstance.AvailabilityZone
   ElasticIp:
     Value: !Ref KafkaElasticIp
   SecurityGroupId:

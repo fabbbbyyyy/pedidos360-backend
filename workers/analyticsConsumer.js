@@ -64,6 +64,7 @@ const buildDltMessage = ({ message, error, sourceTopic }) => ({
 const publishToDlt = async ({ message, error }) => {
   await dltProducer.send({
     topic: dltTopic,
+    acks: -1,
     messages: [buildDltMessage({ message, error, sourceTopic: topic })],
   });
 };
@@ -129,4 +130,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildDltMessage };
+module.exports = { buildDltMessage, publishToDlt };

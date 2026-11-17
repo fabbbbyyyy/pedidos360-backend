@@ -121,6 +121,7 @@ const claim = async (item) => {
 const publish = async (item) => {
   await producer.send({
     topic,
+    acks: -1,
     messages: [buildKafkaMessage(item)],
   });
 };

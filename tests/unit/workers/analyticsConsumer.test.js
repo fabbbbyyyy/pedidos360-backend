@@ -26,12 +26,15 @@ jest.mock('kafkajs', () => ({
 }));
 
 describe('analytics DLT messages', () => {
-  test('preserves the invalid payload and failure metadata', () => {
+  beforeEach(() => {
+    jest.resetModules();
     process.env.ANALYTICS_TABLE = 'analytics';
     process.env.AWS_REGION = 'us-east-1';
     process.env.KAFKA_BROKERS = 'localhost:9092';
     process.env.KAFKA_TLS = 'false';
+  });
 
+  test('preserves the invalid payload and failure metadata', () => {
     const { buildDltMessage } = require('../../../workers/analyticsConsumer');
     const result = buildDltMessage({
       message: {
@@ -48,5 +51,21 @@ describe('analytics DLT messages', () => {
     expect(payload.reason).toBe('eventType Required');
     expect(payload.failedAt).toEqual(expect.any(String));
     expect(result.headers.sourceTopic).toBe('orders.events');
+  });
+
+  test('publishes DLT messages with acknowledgements from all replicas', async () => {
+    const { publishToDlt } = require('../../../workers/analyticsConsumer');
+    const { Kafka } = require('kafkajs');
+    const producerSend = Kafka.mock.results[0].value.producer.mock.results[0].value.send;
+
+    await publishToDlt({
+      message: { key: Buffer.from('order-1'), value: Buffer.from('{}') },
+      error: new Error('Invalid event'),
+    });
+
+    expect(producerSend).toHaveBeenCalledWith(expect.objectContaining({
+      topic: 'orders.events.dlt',
+      acks: -1,
+    }));
   });
 });

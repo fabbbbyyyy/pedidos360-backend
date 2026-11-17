@@ -22,7 +22,9 @@ jest.mock('kafkajs', () => ({
 describe('outbox publisher lease recovery', () => {
   let dynamo;
   let dynamoFrom;
+  let producerSend;
   let buildKafkaMessage;
+  let processBatch;
   let recoverExpiredLeases;
 
   beforeEach(() => {
@@ -35,7 +37,9 @@ describe('outbox publisher lease recovery', () => {
     ({ DynamoDBDocumentClient: { from: dynamoFrom } } = require('@aws-sdk/lib-dynamodb'));
     dynamo = { send: jest.fn() };
     dynamoFrom.mockReturnValue(dynamo);
-    ({ buildKafkaMessage, recoverExpiredLeases } = require('../../../workers/outboxPublisher'));
+    ({ buildKafkaMessage, processBatch, recoverExpiredLeases } = require('../../../workers/outboxPublisher'));
+    const { Kafka } = require('kafkajs');
+    producerSend = Kafka.mock.results[0].value.producer.mock.results[0].value.send;
   });
 
   afterEach(() => {
@@ -80,5 +84,30 @@ describe('outbox publisher lease recovery', () => {
 
     expect(message.headers).toEqual({ eventId: 'invalid-event' });
     expect(JSON.parse(message.value)).not.toHaveProperty('eventType');
+  });
+
+  test('publishes outbox messages with acknowledgements from all replicas', async () => {
+    const item = {
+      pk: 'OUTBOX#1',
+      sk: 'EVENT#1',
+      eventId: 'event-1',
+      eventType: 'order.created',
+      source: 'orders',
+      occurredAt: new Date().toISOString(),
+      data: { orderId: 'order-1' },
+    };
+    dynamo.send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [item] })
+      .mockResolvedValueOnce({ Attributes: item })
+      .mockResolvedValueOnce({});
+
+    await processBatch();
+
+    expect(producerSend).toHaveBeenCalledWith(expect.objectContaining({
+      topic: 'orders.events',
+      acks: -1,
+      messages: [expect.objectContaining({ key: 'order-1' })],
+    }));
   });
 });
