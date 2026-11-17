@@ -239,6 +239,8 @@ Configura `KAFKA_CLUSTER_ID` como variable del repositorio en GitHub (no es un s
 
 El workflow no migra datos Kafka ni cambia el factor de replicación de topics ya existentes. Úsalo con un stack de prueba y volúmenes Kafka nuevos; no reutilices un directorio de datos de otro clúster o `cluster.id`. Si `orders.events` o `orders.events.dlt` ya existen con un factor distinto de 3, el workflow se detendrá antes de desplegar los workers: migra esos topics explícitamente o prepara un clúster de prueba vacío.
 
+Si `KAFKA_TLS` no está configurado como `false` en `KAFKA_ENV_B64`, configura también el secreto `KAFKA_CA_B64` con el certificado CA codificado en Base64; el workflow lo valida antes de actualizar el stack.
+
 ### Distribución de workers para la prueba
 
 Los brokers se ejecutan en las tres EC2. El consumer `analytics` se ejecuta en las tres, con el mismo `KAFKA_ANALYTICS_GROUP`, para que Kafka distribuya las tres particiones entre ellos. El `outbox-publisher` se ejecuta en broker 1 y broker 2; ambos compiten por eventos mediante los leases condicionales de DynamoDB. Así, la caída de una EC2 deja al menos un publisher activo.

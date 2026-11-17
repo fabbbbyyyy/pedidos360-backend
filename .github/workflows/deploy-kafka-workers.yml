@@ -68,6 +68,7 @@ jobs:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           KAFKA_ENV_B64: ${{ secrets.KAFKA_ENV_B64 }}
+          KAFKA_CA_B64: ${{ secrets.KAFKA_CA_B64 }}
           KAFKA_CLUSTER_ID: ${{ vars.KAFKA_CLUSTER_ID }}
           WORKERS_IMAGE: ${{ needs.build.outputs.image }}
         shell: bash
@@ -79,6 +80,11 @@ jobs:
           : "${GHCR_READ_TOKEN:?GHCR_READ_TOKEN is required}"
           : "${KAFKA_ENV_B64:?KAFKA_ENV_B64 is required}"
           : "${KAFKA_CLUSTER_ID:?Set the stable, non-secret GitHub Actions variable KAFKA_CLUSTER_ID}"
+          kafka_tls=$(printf '%s' "$KAFKA_ENV_B64" | base64 -d | awk -F= '$1 == "KAFKA_TLS" { gsub(/\r/, "", $2); print $2; exit }')
+          if [ "${kafka_tls:-true}" != "false" ] && [ -z "${KAFKA_CA_B64:-}" ]; then
+            echo "KAFKA_CA_B64 secret is required unless KAFKA_TLS=false in KAFKA_ENV_B64" >&2
+            exit 1
+          fi
 
           stack_status=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" \
