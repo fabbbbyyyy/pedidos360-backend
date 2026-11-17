@@ -60,13 +60,22 @@ los leases `PROCESSING` cuyo `leaseUntil` ya expiró y los devuelve a `PENDING`.
 ## Carga de prueba y DLT
 
 `scripts/load-test.js` inserta eventos directamente en la tabla Outbox usando
-el instance profile de la EC2. Genera 500 eventos por defecto: cuatro de cada
-cinco son válidos y uno de cada cinco omite `eventType` para probar la DLT.
-Ejecutarlo únicamente en un entorno de prueba o aceptando que creará pedidos
-de prueba en las métricas:
+el instance profile de la EC2. Genera 100 eventos por defecto: 75 válidos, 15
+inválidos que deben llegar a `orders.events.dlt` y 10 sin `data`, que deben
+permanecer en `PENDING` para probar reintentos del publisher. Ejecutarlo
+únicamente en un entorno de prueba o aceptando que creará datos de prueba en
+las métricas:
 
 ```bash
-LOAD_TEST_TOTAL=500 LOAD_TEST_INVALID_EVERY=5 \
+LOAD_TEST_TOTAL=100 LOAD_TEST_DLT_COUNT=15 LOAD_TEST_RETRY_COUNT=10 \
+docker compose exec -T outbox-publisher node - < scripts/load-test.js
+```
+
+El comando imprime un `runId`. Guardarlo para limpiar únicamente los datos
+generados por esa ejecución:
+
+```bash
+LOAD_TEST_MODE=cleanup LOAD_TEST_RUN_ID=load-test-XXXXXXXX \
 docker compose exec -T outbox-publisher node - < scripts/load-test.js
 ```
 

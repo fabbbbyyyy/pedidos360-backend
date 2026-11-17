@@ -1,8 +1,10 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
 
-const total = Number(process.env.LOAD_TEST_TOTAL || 500);
-const invalidEvery = Number(process.env.LOAD_TEST_INVALID_EVERY || 5);
+const total = Number(process.env.LOAD_TEST_TOTAL || 100);
+const dltCount = Number(process.env.LOAD_TEST_DLT_COUNT || 15);
+const retryCount = Number(process.env.LOAD_TEST_RETRY_COUNT || 10);
+const mode = process.env.LOAD_TEST_MODE || 'insert';
 const tableName = process.env.OUTBOX_TABLE;
 const region = process.env.AWS_REGION || 'us-east-1';
 
@@ -12,31 +14,42 @@ if (!tableName) {
 if (!Number.isInteger(total) || total < 1) {
   throw new Error('LOAD_TEST_TOTAL debe ser un entero positivo');
 }
-if (!Number.isInteger(invalidEvery) || invalidEvery < 0) {
-  throw new Error('LOAD_TEST_INVALID_EVERY debe ser un entero mayor o igual a cero');
+if (!Number.isInteger(dltCount) || dltCount < 0 || !Number.isInteger(retryCount) || retryCount < 0) {
+  throw new Error('LOAD_TEST_DLT_COUNT y LOAD_TEST_RETRY_COUNT deben ser enteros no negativos');
+}
+if (dltCount + retryCount > total) {
+  throw new Error('La suma de LOAD_TEST_DLT_COUNT y LOAD_TEST_RETRY_COUNT no puede superar LOAD_TEST_TOTAL');
+}
+if (!['insert', 'cleanup'].includes(mode)) {
+  throw new Error('LOAD_TEST_MODE debe ser insert o cleanup');
 }
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
-const runId = `load-test-${Date.now()}`;
+const runId = process.env.LOAD_TEST_RUN_ID || `load-test-${Date.now()}`;
 
 const buildItem = (index) => {
   const eventId = `${runId}-${index}`;
   const orderId = `${runId}-order-${index}`;
   const occurredAt = new Date(Date.now() + index).toISOString();
-  const invalid = invalidEvery > 0 && index % invalidEvery === 0;
+  const retry = index <= retryCount;
+  const dlt = !retry && index <= retryCount + dltCount;
+  const eventType = index % 2 === 0 ? 'ORDER_STATUS_CHANGED' : 'ORDER_CREATED';
   const event = {
     eventId,
-    eventType: 'ORDER_CREATED',
+    eventType,
     source: 'load-test',
     occurredAt,
     data: {
       orderId,
-      status: 'PENDING',
+      ...(eventType === 'ORDER_STATUS_CHANGED'
+        ? { previousStatus: 'PENDING', status: 'CONFIRMED', version: 2 }
+        : { status: 'PENDING', total: 1000 + index }),
       total: 1000 + index,
     },
   };
 
-  if (invalid) delete event.eventType;
+  if (dlt) delete event.eventType;
+  if (retry) delete event.data;
 
   return {
     pk: `EVENT#${eventId}`,
@@ -69,18 +82,39 @@ const writeBatch = async (items) => {
   }
 };
 
+const deleteBatch = async (items) => {
+  let pending = items.map((item) => ({
+    DeleteRequest: { Key: { pk: item.pk, sk: item.sk } },
+  }));
+  while (pending.length > 0) {
+    const result = await dynamo.send(new BatchWriteCommand({
+      RequestItems: { [tableName]: pending },
+    }));
+    pending = result.UnprocessedItems?.[tableName] || [];
+    if (pending.length > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+};
+
 const run = async () => {
   const items = Array.from({ length: total }, (_, index) => buildItem(index + 1));
-  for (const batch of chunks(items, 25)) await writeBatch(batch);
+  if (mode === 'cleanup') {
+    if (!process.env.LOAD_TEST_RUN_ID) {
+      throw new Error('LOAD_TEST_RUN_ID es obligatorio cuando LOAD_TEST_MODE=cleanup');
+    }
+    for (const batch of chunks(items, 25)) await deleteBatch(batch);
+    console.log(JSON.stringify({ mode, runId, tableName, deleted: items.length }));
+    return;
+  }
 
-  const invalid = invalidEvery > 0 ? Math.floor(total / invalidEvery) : 0;
+  for (const batch of chunks(items, 25)) await writeBatch(batch);
   console.log(JSON.stringify({
+    mode,
     runId,
     tableName,
     total,
-    valid: total - invalid,
-    invalid,
-    invalidEvery,
+    valid: total - dltCount - retryCount,
+    dlt: dltCount,
+    retry: retryCount,
   }));
 };
 
