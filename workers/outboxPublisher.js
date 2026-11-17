@@ -121,19 +121,24 @@ const claim = async (item) => {
 const publish = async (item) => {
   await producer.send({
     topic,
-    messages: [{
-      key: item.data.orderId,
-      value: JSON.stringify({
-        eventId: item.eventId,
-        eventType: item.eventType,
-        source: item.source,
-        occurredAt: item.occurredAt,
-        data: item.data,
-      }),
-      headers: { eventId: item.eventId, eventType: item.eventType },
-    }],
+    messages: [buildKafkaMessage(item)],
   });
 };
+
+const buildKafkaMessage = (item) => ({
+  key: item.data.orderId,
+  value: JSON.stringify({
+    eventId: item.eventId,
+    eventType: item.eventType,
+    source: item.source,
+    occurredAt: item.occurredAt,
+    data: item.data,
+  }),
+  headers: {
+    eventId: item.eventId,
+    ...(item.eventType ? { eventType: item.eventType } : {}),
+  },
+});
 
 const markPublished = (item) => dynamo.send(new UpdateCommand({
   TableName: tableName,
@@ -204,6 +209,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildKafkaMessage,
   recoverExpiredLeases,
   processBatch,
 };

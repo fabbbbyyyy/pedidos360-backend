@@ -69,8 +69,9 @@ const publishToDlt = async ({ message, error }) => {
 };
 
 const processMessage = async ({ message }) => {
+  let event;
   try {
-    const event = parseEvent(message.value.toString());
+    event = parseEvent(message.value.toString());
     await dynamo.send(new TransactWriteCommand({
       TransactItems: buildAnalyticsTransaction({ event, tableName }),
     }));

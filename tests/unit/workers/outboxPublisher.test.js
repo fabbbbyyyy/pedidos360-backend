@@ -22,6 +22,7 @@ jest.mock('kafkajs', () => ({
 describe('outbox publisher lease recovery', () => {
   let dynamo;
   let dynamoFrom;
+  let buildKafkaMessage;
   let recoverExpiredLeases;
 
   beforeEach(() => {
@@ -34,7 +35,7 @@ describe('outbox publisher lease recovery', () => {
     ({ DynamoDBDocumentClient: { from: dynamoFrom } } = require('@aws-sdk/lib-dynamodb'));
     dynamo = { send: jest.fn() };
     dynamoFrom.mockReturnValue(dynamo);
-    ({ recoverExpiredLeases } = require('../../../workers/outboxPublisher'));
+    ({ buildKafkaMessage, recoverExpiredLeases } = require('../../../workers/outboxPublisher'));
   });
 
   afterEach(() => {
@@ -67,5 +68,17 @@ describe('outbox publisher lease recovery', () => {
         ':pendingIndex': 'STATUS#PENDING',
       }),
     }));
+  });
+
+  test('omits undefined headers so malformed envelopes can reach the analytics DLT', () => {
+    const message = buildKafkaMessage({
+      eventId: 'invalid-event',
+      source: 'load-test',
+      occurredAt: new Date().toISOString(),
+      data: { orderId: 'order-1' },
+    });
+
+    expect(message.headers).toEqual({ eventId: 'invalid-event' });
+    expect(JSON.parse(message.value)).not.toHaveProperty('eventType');
   });
 });
