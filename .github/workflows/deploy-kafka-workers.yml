@@ -201,7 +201,22 @@ jobs:
 
           install_commands=$(cat <<EOF
           set -euo pipefail
-          dnf install -y docker ca-certificates
+          if command -v cloud-init >/dev/null 2>&1; then
+            cloud-init status --wait
+          fi
+          if ! rpm -q docker >/dev/null 2>&1 || ! rpm -q ca-certificates >/dev/null 2>&1; then
+            if ! dnf install -y docker ca-certificates; then
+              if ! rpm -q docker >/dev/null 2>&1 || ! rpm -q ca-certificates >/dev/null 2>&1; then
+                echo "No se pudieron instalar Docker y ca-certificates" >&2
+                exit 1
+              fi
+              echo "DNF informó un conflicto, pero los paquetes ya están instalados; continúo" >&2
+            fi
+          fi
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "El paquete Docker está instalado, pero no se encuentra el comando docker" >&2
+            exit 1
+          fi
           systemctl enable --now docker
           if ! docker compose version >/dev/null 2>&1; then
             install -d -m 755 /usr/local/lib/docker/cli-plugins

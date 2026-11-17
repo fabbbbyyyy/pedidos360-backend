@@ -245,6 +245,8 @@ Los brokers se ejecutan en las tres EC2. El consumer `analytics` se ejecuta en l
 
 Dos publishers duplican aproximadamente las consultas de polling de la outbox respecto de uno. La publicación sigue siendo al menos una vez, por lo que se debe conservar el procesamiento idempotente. Esta co-ubicación es para probar; para producción conviene desplegar los workers como servicios separados de los brokers y distribuirlos entre zonas de disponibilidad.
 
+El bootstrap remoto espera a que termine `cloud-init` y verifica los paquetes de Docker antes de instalarlos. Si un comando SSM falla, revisa su salida y el estado de CloudFormation antes de relanzar: un fallo de SSM no implica que CloudFormation haya revertido el stack.
+
 Fases del workflow:
 
 1. Instalar dependencias y ejecutar tests.
