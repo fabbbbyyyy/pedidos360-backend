@@ -341,9 +341,28 @@ jobs:
             --config retention.ms=2592000000 \
             --config min.insync.replicas=2
           for topic in orders.events orders.events.dlt; do
-            topic_description=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+            if topic_description=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
               --bootstrap-server localhost:29092 \
-              --describe --topic "\$topic")
+              --describe --topic "\$topic" 2>&1); then
+              :
+            else
+              describe_status=\$?
+              printf 'No se pudo describir %s (exit %s):\n%s\n' "\$topic" "\$describe_status" "\$topic_description" >&2
+              exit "\$describe_status"
+            fi
+            if [ -z "\$topic_description" ]; then
+              if topic_list=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:29092 \
+                --list 2>&1); then
+                :
+              else
+                list_status=\$?
+                printf 'No se pudo listar topics (exit %s):\n%s\n' "\$list_status" "\$topic_list" >&2
+                exit "\$list_status"
+              fi
+              printf 'El describe de %s no devolvió salida. Topics visibles:\n%s\n' "\$topic" "\$topic_list" >&2
+              exit 1
+            fi
             if ! printf '%s\n' "\$topic_description" | grep -Eq 'ReplicationFactor:[[:space:]]*3([[:space:]]|$)'; then
               printf 'Descripción actual de %s:\n%s\n' "\$topic" "\$topic_description" >&2
               echo "Topic \$topic must have replication factor 3; migrate it explicitly before deploying workers" >&2
