@@ -344,7 +344,8 @@ jobs:
             topic_description=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
               --bootstrap-server localhost:29092 \
               --describe --topic "\$topic")
-            if ! printf '%s\n' "\$topic_description" | grep -q 'ReplicationFactor: 3'; then
+            if ! printf '%s\n' "\$topic_description" | grep -Eq 'ReplicationFactor:[[:space:]]*3([[:space:]]|$)'; then
+              printf 'Descripción actual de %s:\n%s\n' "\$topic" "\$topic_description" >&2
               echo "Topic \$topic must have replication factor 3; migrate it explicitly before deploying workers" >&2
               exit 1
             fi
